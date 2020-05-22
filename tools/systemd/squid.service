@@ -1,4 +1,4 @@
-## Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+## Copyright (C) 1996-2016 The Squid Software Foundation and contributors
 ##
 ## Squid software is distributed under GPLv2+ license and includes
 ## contributions from numerous individuals and organizations.
@@ -7,16 +7,13 @@
 
 [Unit]
 Description=Squid Web Proxy Server
-Documentation=man:squid(8)
-After=network.target network-online.target nss-lookup.target
+After=network.target
 
 [Service]
-Type=forking
-PIDFile=/var/run/squid.pid
-ExecStartPre=/usr/sbin/squid --foreground -z
-ExecStart=/usr/sbin/squid -sYC
+Type=simple
+ExecStart=/usr/sbin/squid -sYC -N
 ExecReload=/bin/kill -HUP $MAINPID
-KillMode=mixed
+KillMode=process
 
 [Install]
 WantedBy=multi-user.target

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -39,39 +39,24 @@ public:
         reference (p);
     }
 
-    RefCount (RefCount &&p) : p_(std::move(p.p_)) {
-        p.p_=NULL;
-    }
-
     RefCount& operator = (const RefCount& p) {
         // DO NOT CHANGE THE ORDER HERE!!!
         // This preserves semantics on self assignment
-        C const *newP_ = p.p_;
-        reference(p);
-        dereference(newP_);
-        return *this;
-    }
-
-    RefCount& operator = (RefCount&& p) {
-        if (this != &p) {
-            dereference(p.p_);
-            p.p_ = NULL;
+        if (p.p_ != p_){
+         C const *newP_ = p.p_;
+         reference(p);
+         dereference(newP_);
         }
         return *this;
     }
-
-    explicit operator bool() const { return p_; }
 
     bool operator !() const { return !p_; }
 
     C * operator-> () const {return const_cast<C *>(p_); }
 
-    C & operator * () const {
-        assert(p_);
-        return *const_cast<C *>(p_);
-    }
+    C & operator * () const {return *const_cast<C *>(p_); }
 
-    C * getRaw() const { return const_cast<C *>(p_); }
+    C * getRaw() const {return const_cast<C *>(p_); }
 
     bool operator == (const RefCount& p) const {
         return p.p_ == p_;
@@ -90,13 +75,13 @@ private:
         C const (*tempP_) (p_);
         p_ = newP;
 
-        if (tempP_ && tempP_->unlock() == 0)
+        if (tempP_ && tempP_->unlock(__FUNCTION__,__LINE__) == 0)
             delete tempP_;
     }
 
     void reference (const RefCount& p) {
         if (p.p_)
-            p.p_->lock();
+            p.p_->lock(__FUNCTION__,__LINE__);
     }
 
     C const *p_;

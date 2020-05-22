@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -9,10 +9,8 @@
 #ifndef __AUTH_BASIC_H__
 #define __AUTH_BASIC_H__
 
-#if HAVE_AUTH_MODULE_BASIC
-
+#include "auth/Config.h"
 #include "auth/Gadgets.h"
-#include "auth/SchemeConfig.h"
 #include "auth/UserRequest.h"
 #include "helper/forward.h"
 
@@ -22,7 +20,7 @@ namespace Basic
 {
 
 /** Basic authentication configuration data */
-class Config : public Auth::SchemeConfig
+class Config : public Auth::Config
 {
 public:
     Config();
@@ -31,10 +29,10 @@ public:
     virtual Auth::UserRequest::Pointer decode(char const *proxy_auth, const char *requestRealm);
     virtual void done();
     virtual void rotateHelpers();
-    virtual bool dump(StoreEntry *, const char *, Auth::SchemeConfig *) const;
-    virtual void fixHeader(Auth::UserRequest::Pointer, HttpReply *, Http::HdrType, HttpRequest *);
-    virtual void init(Auth::SchemeConfig *);
-    virtual void parse(Auth::SchemeConfig *, int, char *);
+    virtual bool dump(StoreEntry *, const char *, Auth::Config *) const;
+    virtual void fixHeader(Auth::UserRequest::Pointer, HttpReply *, http_hdr_type, HttpRequest *);
+    virtual void init(Auth::Config *);
+    virtual void parse(Auth::Config *, int, char *);
     void decode(char const *httpAuthHeader, Auth::UserRequest::Pointer);
     virtual void registerWithCacheManager(void);
     virtual const char * type() const;
@@ -42,6 +40,7 @@ public:
 public:
     time_t credentialsTTL;
     int casesensitive;
+    int utf8;
 
 private:
     char * decodeCleartext(const char *httpAuthHeader);
@@ -52,6 +51,5 @@ private:
 
 extern helper *basicauthenticators;
 
-#endif /* HAVE_AUTH_MODULE_BASIC */
 #endif /* __AUTH_BASIC_H__ */
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -18,7 +18,6 @@
 #include "HttpRequest.h"
 #include "mgr/Registration.h"
 #include "neighbors.h"
-#include "PeerSelectState.h"
 #include "SquidConfig.h"
 #include "Store.h"
 
@@ -147,7 +146,7 @@ peerUserHashRegisterWithCacheManager(void)
 }
 
 CachePeer *
-peerUserHashSelectParent(PeerSelector *ps)
+peerUserHashSelectParent(HttpRequest * request)
 {
     int k;
     const char *c;
@@ -161,9 +160,6 @@ peerUserHashSelectParent(PeerSelector *ps)
 
     if (n_userhash_peers == 0)
         return NULL;
-
-    assert(ps);
-    HttpRequest *request = ps->request;
 
     if (request->auth_user_request != NULL)
         key = request->auth_user_request->username();
@@ -187,7 +183,7 @@ peerUserHashSelectParent(PeerSelector *ps)
         debugs(39, 3, "peerUserHashSelectParent: " << tp->name << " combined_hash " << combined_hash  <<
                " score " << std::setprecision(0) << score);
 
-        if ((score > high_score) && peerHTTPOkay(tp, ps)) {
+        if ((score > high_score) && peerHTTPOkay(tp, request)) {
             p = tp;
             high_score = score;
         }

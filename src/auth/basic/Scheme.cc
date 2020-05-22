@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -40,10 +40,10 @@ Auth::Basic::Scheme::shutdownCleanup()
     debugs(29, DBG_CRITICAL, "Shutdown: Basic authentication.");
 }
 
-Auth::SchemeConfig *
+Auth::Config *
 Auth::Basic::Scheme::createConfig()
 {
     Auth::Basic::Config *newCfg = new Auth::Basic::Config;
-    return dynamic_cast<Auth::SchemeConfig*>(newCfg);
+    return dynamic_cast<Auth::Config*>(newCfg);
 }
 

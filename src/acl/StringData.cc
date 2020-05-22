@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -11,7 +11,7 @@
 #include "squid.h"
 #include "acl/Checklist.h"
 #include "acl/StringData.h"
-#include "ConfigParser.h"
+#include "cache_cf.h"
 #include "Debug.h"
 
 ACLStringData::ACLStringData(ACLStringData const &old) : stringValues(old.stringValues)
@@ -25,24 +25,18 @@ ACLStringData::insert(const char *value)
 }
 
 bool
-ACLStringData::match(const SBuf &tf)
+ACLStringData::match(char const *toFind)
 {
-    if (stringValues.empty() || tf.isEmpty())
+    if (stringValues.empty() || !toFind)
         return 0;
 
+    SBuf tf(toFind);
     debugs(28, 3, "aclMatchStringList: checking '" << tf << "'");
 
     bool found = (stringValues.find(tf) != stringValues.end());
     debugs(28, 3, "aclMatchStringList: '" << tf << "' " << (found ? "found" : "NOT found"));
 
     return found;
-}
-
-// XXX: performance regression due to SBuf(char*) data-copies.
-bool
-ACLStringData::match(char const *toFind)
-{
-    return match(SBuf(toFind));
 }
 
 SBufList
@@ -56,7 +50,8 @@ ACLStringData::dump() const
 void
 ACLStringData::parse()
 {
-    while (const char *t = ConfigParser::strtokFile())
+    char *t;
+    while ((t = strtokFile()))
         stringValues.insert(SBuf(t));
 }
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -69,8 +69,7 @@ Icmp4::Open(void)
     icmp_sock = socket(PF_INET, SOCK_RAW, IPPROTO_ICMP);
 
     if (icmp_sock < 0) {
-        int xerrno = errno;
-        debugs(50, DBG_CRITICAL, MYNAME << " icmp_sock: " << xstrerr(xerrno));
+        debugs(50, DBG_CRITICAL, HERE << " icmp_sock: " << xstrerror());
         return -1;
     }
 
@@ -143,8 +142,7 @@ Icmp4::SendEcho(Ip::Address &to, int opcode, const char *payload, int len)
                S->ai_addrlen);
 
     if (x < 0) {
-        int xerrno = errno;
-        debugs(42, DBG_IMPORTANT, MYNAME << "ERROR: sending to ICMP packet to " << to << ": " << xstrerr(xerrno));
+        debugs(42, DBG_IMPORTANT, HERE << "Error sending to ICMP packet to " << to << ". ERR: " << xstrerror());
     }
 
     Log(to, ' ', NULL, 0, 0);

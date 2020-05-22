@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -14,13 +14,12 @@
  */
 
 #include "squid.h"
-#include "acl/FilledChecklist.h"
 #include "HttpRequest.h"
 #include "ICP.h"
 #include "Store.h"
 
 /// \ingroup ServerProtocolICPInternal3
-class ICP3State: public ICPState
+class ICP3State : public ICPState, public StoreClient
 {
 
 public:
@@ -61,23 +60,20 @@ ICP3State::~ICP3State()
 {}
 
 void
-ICP3State::created(StoreEntry *e)
+ICP3State::created(StoreEntry *newEntry)
 {
+    StoreEntry *entry = newEntry->isNull () ? NULL : newEntry;
     debugs(12, 5, "icpHandleIcpV3: OPCODE " << icp_opcode_str[header.opcode]);
     icp_opcode codeToSend;
 
-    if (e && confirmAndPrepHit(*e)) {
+    if (icpCheckUdpHit(entry, request)) {
         codeToSend = ICP_HIT;
     } else if (icpGetCommonOpcode() == ICP_ERR)
         codeToSend = ICP_MISS;
     else
         codeToSend = icpGetCommonOpcode();
 
-    icpCreateAndSend(codeToSend, 0, url, header.reqnum, 0, fd, from, al);
-
-    // TODO: StoreClients must either store/lock or abandon found entries.
-    //if (e)
-    //    e->abandon();
+    icpCreateAndSend (codeToSend, 0, url, header.reqnum, 0, fd, from);
 
     delete this;
 }

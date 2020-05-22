@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -18,12 +18,6 @@
 #include "SquidConfig.h"
 #include "SquidTime.h"
 #include "Store.h"
-
-/*
- * struct stat and squidaio_xstrdup use explicit pool alloc()/freeOne().
- * XXX: convert to MEMPROXY_CLASS() API
- */
-#include "mem/Pool.h"
 
 #include <cerrno>
 #include <csignal>
@@ -296,7 +290,7 @@ squidaio_init(void)
     /* Create threads and get them to sit in their wait loop */
     squidaio_thread_pool = memPoolCreate("aio_thread", sizeof(squidaio_thread_t));
 
-    assert(NUMTHREADS != 0);
+    assert( NUMTHREADS != 0 );
 
     for (i = 0; i < NUMTHREADS; ++i) {
         threadp = (squidaio_thread_t *)squidaio_thread_pool->alloc();

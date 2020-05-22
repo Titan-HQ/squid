@@ -1,4 +1,4 @@
-## Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+## Copyright (C) 1996-2016 The Squid Software Foundation and contributors
 ##
 ## Squid software is distributed under GPLv2+ license and includes
 ## contributions from numerous individuals and organizations.
@@ -13,35 +13,21 @@ noinst_LTLIBRARIES = libbase.la
 libbase_la_SOURCES = \
 	AsyncCall.cc \
 	AsyncCall.h \
+	AsyncCbdataCalls.h \
+	AsyncJob.h \
+	AsyncJob.cc \
+	AsyncJobCalls.h \
 	AsyncCallQueue.cc \
 	AsyncCallQueue.h \
-	AsyncCbdataCalls.h \
-	AsyncJob.cc \
-	AsyncJob.h \
-	AsyncJobCalls.h \
-	ByteCounter.h \
-	CbcPointer.h \
-	CbDataList.h \
-	CharacterSet.cc \
 	CharacterSet.h \
-	EnumIterator.h \
-	File.cc \
-	File.h \
-	HardFun.h \
-	Here.cc \
-	Here.h \
+	CharacterSet.cc \
+	CbcPointer.h \
 	InstanceId.h \
 	Lock.h \
-	LookupTable.h \
 	LruMap.h \
-	Packable.h \
-	PackableStream.h \
-	Range.h \
-	RegexPattern.cc \
-	RegexPattern.h \
 	RunnersRegistry.cc \
 	RunnersRegistry.h \
 	Subscription.h \
 	TextException.cc \
 	TextException.h \
-	YesNoNone.h
+	TidyPointer.h

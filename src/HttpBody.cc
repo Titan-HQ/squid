@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -12,11 +12,23 @@
 #include "HttpBody.h"
 #include "MemBuf.h"
 
+uint64_t g_HttpBody_c = 0;
+uint64_t g_HttpBody_d = 0;
+
+void get_HttpBody_life_stats(std::ostream & a_os)
+{
+    a_os << " HttpBody: c = " << g_HttpBody_c << " d = " << g_HttpBody_d;
+    a_os << " (" << (g_HttpBody_c - g_HttpBody_d) << ")\n"; 
+}
+
 HttpBody::HttpBody() : mb(new MemBuf)
-{}
+{
+    g_HttpBody_c++;
+}
 
 HttpBody::~HttpBody()
 {
+    g_HttpBody_d++;
     delete mb;
 }
 
@@ -39,11 +51,11 @@ HttpBody::setMb(MemBuf * mb_)
 }
 
 void
-HttpBody::packInto(Packable * p) const
+HttpBody::packInto(Packer * p) const
 {
     assert(p);
 
     if (mb->contentSize())
-        p->append(mb->content(), mb->contentSize());
+        packerAppend(p, mb->content(), mb->contentSize());
 }
 

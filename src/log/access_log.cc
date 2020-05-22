@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -11,6 +11,7 @@
 #include "squid.h"
 #include "AccessLogEntry.h"
 #include "acl/Checklist.h"
+#include "client_side_request.h"
 #if USE_ADAPTATION
 #include "adaptation/Config.h"
 #endif
@@ -38,6 +39,213 @@
 #include "eui/Eui48.h"
 #include "eui/Eui64.h"
 #endif
+
+//Titax.
+#include "TitaxUser.h"
+#include "titaxlib.h"
+#include "sock_rw.h"
+#include "Group.h"
+#include "log.h"
+#include "Category.h"
+
+
+void send_log_data2(
+    const char* username
+    , char** groups
+    , int group_count
+    , int ip_addr
+    , char** categories
+    , int category_count
+    , const char* url
+    , unsigned long duration
+    , unsigned long object_size
+    , int blocking_source
+    , const char* reason
+    , int cached
+    , char** notifications
+    , int notify_count
+    ){
+
+    if (!url){
+        std::cout << "err:[send_log_data2]: url is null ! \n";
+        return;
+    };
+
+    char* log_data = NULL;
+    int i = 0;
+    int known_protocol_flag = 0;
+    time_t time_now;
+    struct tm ts;
+    time(&time_now);
+    localtime_r(&time_now, &ts);
+
+    if(!username || !username[0]){
+        username = TITAX_ANON_DEFAULT_USER_NAME;
+        std::cout << "(send_log_data2/icap)::WRN: anonymous user 0\n";
+    }
+
+    /* Compute size of memory required for log data */
+
+    int sz = snprintf(NULL, 0, "%ld %d %lu %lu %08x %d %d %s %s\n",
+        (long int)time_now,    /* unixtime */
+        ts.tm_hour * 60 + ts.tm_min, /* time */
+        object_size,      /* size */
+        duration,        /* duration */
+        ip_addr,       /* IP address */
+        cached,          /* cached */
+        blocking_source,  /* status */
+        url,             /* URL */
+        username         /* User Name */
+        );
+
+   /* 
+      known_protocol_flag -- This had been introduced as squid is trimming off 
+      https from the url and logger will not accept any entry without protcol.
+      If there is no protocol specified, log that as https
+    */
+
+
+    if(strncasecmp(url, "http://", 7) == 0){
+        known_protocol_flag = 1;
+    }
+    else if(strncasecmp(url, "https://", 8) == 0){
+        known_protocol_flag = 1;
+    }
+    else if(strncasecmp(url, "ftp://", 6) == 0){
+        known_protocol_flag = 1;
+    }
+    else if (strstr(url,"://")){
+        known_protocol_flag = 1;
+    };
+
+    if(0 == known_protocol_flag){
+        sz += 8;
+    }
+
+    /* Groups */
+    for(i = 0 ; i < group_count ; i++){
+        sz += snprintf(NULL, 0, "G%s\n", groups[i]);
+    }
+
+    // Temporary solution for bug 112.
+    if(category_count > 5){
+        category_count = 0;
+    }
+
+    /* Categories */
+    for(i = 0 ; i < category_count ; i++){
+        sz += snprintf(NULL, 0, "C%s\n", categories[i]);
+    }
+
+    /* Notifications */
+    for(i = 0 ; i < notify_count ; i++){
+        // N is for notification
+        // E is for e-mail, only notifications we have at the moment
+        sz += snprintf(NULL, 0, "NE%s\n", notifications[i]);
+    }
+
+    /* Reason */
+    if(reason && strlen(reason) > 0){
+        sz += snprintf(NULL, 0, "R%s\n", reason);
+    }
+
+    sz++; /* terminating null character */
+
+    /* Allocate memory */
+    log_data = (char*)xcalloc(sz, sizeof(char));
+    if(!log_data){
+        titax_log(LOG_WARNING, "Unable to log access: Out of memory\n");
+        return;
+    }
+
+    /* Create log_data */
+    int pos = 0;
+    pos += snprintf(log_data, sz-pos, "%ld %d %lu %lu %08x %d %d %s%s %s\n",
+        (long int)time_now,    /* unixtime */
+        ts.tm_hour * 60 + ts.tm_min, /* time */
+        object_size,      /* size */
+        duration,        /* duration */
+        ip_addr,       /* IP address */
+        cached,          /* cached */
+        blocking_source,  /* status */
+        (0 == known_protocol_flag) ? "http://" : "", /* Log unknown protocol as https */
+        url,             /* URL */
+        username         /* User Name */
+        );
+
+    /* Groups */
+    for(i = 0 ; i < group_count ; i++){
+        pos += snprintf(log_data + pos, sz-pos, "G%s\n", groups[i]);
+    }
+
+    /* Categories */
+    for(i = 0 ; i < category_count ; i++){
+        pos += snprintf(log_data + pos, sz-pos, "C%s\n", categories[i]);
+    }
+
+    /* Notifications */
+    for(i = 0 ; i < notify_count ; i++){
+        // N is for notification
+        // E is for e-mail, only notifications we have at the moment
+        pos += snprintf(log_data + pos, sz-pos, "NE%s\n", notifications[i]);
+    }
+
+    /* Reason */
+    if(reason && strlen(reason) > 0){
+        pos += snprintf(log_data + pos, sz-pos, "R%s\n", reason);
+    }
+
+    if(logger_open()){
+        /* Send message header - length of LOG + null char + logdata + null char */
+        unsigned int dtsz=strlen(log_data) ;
+        uint32_t len = 4 * sizeof(char) +dtsz+ sizeof(char);
+        char buff[len+sizeof(len)+1];
+        len = htonl(len);
+        char * pb=buff;
+        memset(pb,0,sizeof buff);
+        memcpy(pb,&len,sizeof(len));
+        pb+=sizeof(len);
+        memcpy(pb,"LOG",3);
+        pb+=4;
+        memcpy(pb,log_data,dtsz);
+        pb+=dtsz;
+        if(!logger_writen(&buff, sizeof buff)){
+            logger_close();
+            goto END;
+        };
+
+/*
+        if(!logger_writen(&len, sizeof(len))){
+            logger_close();
+            goto END;
+        }
+        printf(">>>TYPE is:LOG\n");
+
+        // Send message type
+        if(!logger_writen("LOG", 4 * sizeof(char))){
+            logger_close();
+            goto END;
+        }
+
+        //printf(">>>Data is:%s\n",log_data);
+        // Send message data
+        if(!logger_writen(log_data, dtsz + sizeof(char))){
+            logger_close();
+            goto END;
+        }
+*/
+        logger_close();
+        /* Disconnect */
+    }
+    else{
+        printf("send_log_data2->Could not connect to logger\n");
+    }
+
+END:
+    /* Free log memory */
+    xfree(log_data);
+    log_data = NULL;
+}
 
 #if HEADERS_LOG
 static Logfile *headerslog = NULL;
@@ -73,71 +281,197 @@ int LogfileStatus = LOG_DISABLE;
 void
 accessLogLogTo(CustomLog* log, AccessLogEntry::Pointer &al, ACLChecklist * checklist)
 {
+    const char *url=NULL;
+    int cacheHit=0;
 
-    if (al->url.isEmpty())
-        al->url = Format::Dash;
+    // Titax.
+    if(al == NULL || (!al->request) || (al->request && al->request->has_been_logged)){
+        return;
+    }
 
-    if (!al->http.content_type || *al->http.content_type == '\0')
-        al->http.content_type = dash_str;
+    int64_t resp_size = al->cache.objectSize;
 
-    if (al->hier.host[0] == '\0')
-        xstrncpy(al->hier.host, dash_str, SQUIDHOSTNAMELEN);
+    if(al->url == NULL || // No URL specified
+    resp_size <= 0      // Nothing there
+    ){
+        return;
+    }
 
-    for (; log; log = log->next) {
-        if (log->aclList && checklist && !checklist->fastCheck(log->aclList).allowed())
-            continue;
+    switch (al->cache.code) {
 
-        // The special-case "none" type has no logfile object set
-        if (log->type == Log::Format::CLF_NONE)
-            return;
+         case LOG_TCP_DENIED:
+         case LOG_TCP_DENIED_REPLY:
+             return;
 
-        if (log->logfile) {
-            logfileLineStart(log->logfile);
+         case LOG_TCP_HIT:
+         case LOG_TCP_IMS_HIT:
+         case LOG_TCP_NEGATIVE_HIT:
+         case LOG_TCP_MEM_HIT:
+         case LOG_TCP_OFFLINE_HIT:
+         case LOG_UDP_HIT:
+         case LOG_TCP_REFRESH_UNMODIFIED:
+         case LOG_TCP_REFRESH_MODIFIED:
+ //    case LOG_TCP_REFRESH_FAIL:
+             cacheHit = 1;
+             break;
 
-            switch (log->type) {
+         default:
+             cacheHit = 0;
+ //        return;                         /* Not interested */
+     }
 
-            case Log::Format::CLF_SQUID:
-                Log::Format::SquidNative(al, log->logfile);
-                break;
+    /* Don't log acceses to our own resources */
+    url = al->url;
+    if (strncasecmp(url, "http://", 7) == 0)
+        url += 7;
+    else if (strncasecmp(url, "https://", 8) == 0)
+        url += 8;
+    else if (strncasecmp(url, "ftp://", 6) == 0)
+        url += 6;
 
-            case Log::Format::CLF_COMBINED:
-                Log::Format::HttpdCombined(al, log->logfile);
-                break;
+    TITAX_CONF_LOCK();
+    TitaxConf* const tc = titax_conf_get_instance();
+    if (tc){
+       if (tc->hostname_len) {
+           if (strncasecmp(tc->hostname, url, tc->hostname_len) == 0   &&
+               (url[tc->hostname_len] == '/' || url[tc->hostname_len] == ':')
+            ){
+               TITAX_CONF_UNLOCK(); 
+               return;
+           };
 
-            case Log::Format::CLF_COMMON:
-                Log::Format::HttpdCommon(al, log->logfile);
-                break;
-
-            case Log::Format::CLF_REFERER:
-                Log::Format::SquidReferer(al, log->logfile);
-                break;
-
-            case Log::Format::CLF_USERAGENT:
-                Log::Format::SquidUserAgent(al, log->logfile);
-                break;
-
-            case Log::Format::CLF_CUSTOM:
-                Log::Format::SquidCustom(al, log);
-                break;
-
-#if ICAP_CLIENT
-            case Log::Format::CLF_ICAP_SQUID:
-                Log::Format::SquidIcap(al, log->logfile);
-                break;
-#endif
-
-            default:
-                fatalf("Unknown log format %d\n", log->type);
-                break;
+       }
+       if (tc->fqdn_len) {
+           if (strncasecmp(tc->fqdn, url, tc->fqdn_len) == 0   &&
+               (url[tc->fqdn_len] == '/' || url[tc->fqdn_len] == ':')
+            ){
+                TITAX_CONF_UNLOCK();
+                 return;
+           };
+       }
+        if (tc->int_ip_4_len) {
+           if (strncasecmp(tc->int_ip_4, url, tc->int_ip_4_len) == 0   &&
+               (url[tc->int_ip_4_len] == '/' || url[tc->int_ip_4_len] == ':') )
+            {
+               TITAX_CONF_UNLOCK();
+               return;
             }
+        }
+        if (tc->int_ip_6_len) {
+            if (strncasecmp(tc->int_ip_6, url, tc->int_ip_6_len) == 0   &&
+                (url[tc->int_ip_6_len] == '/' || url[tc->int_ip_6_len] == ':') )
+            {
+                TITAX_CONF_UNLOCK();
+                return;
+            }
+        }
+    };
+    TITAX_CONF_UNLOCK();
 
-            logfileLineEnd(log->logfile);
+    int group_count = al->request->group_count;
+    char **groups = NULL;
+    if (0 == group_count)
+    {
+        group_count = 1;
+        groups = (char**)xcalloc(1, sizeof(char*));
+        groups[0] = xstrdup("Default");
+    }
+    else
+    {
+        groups = (char**)xcalloc(group_count, sizeof(char*));
+        int i = 0;
+        for (i = 0; i < group_count ; ++i)
+        {
+            GROUP grp;
+            getGroup(al->request->groups[i], &grp);
+            groups[i] = xstrdup(grp.name);
+        }
+    }
+
+    char **categories = NULL;
+    int    category_count = 0;
+
+    if (0 != al->category)
+    {
+        // Count bits in al->category. There is typically only a very
+        // few number of set bits, so we'll use the method published by
+        // Brian Kernighan & Dennis Ritchie, C Programming Language 2nd ed. 1988
+        // and Peter Wegner, CACM 3 (1960), 322
+        unsigned long long cat = al->category;
+        for (category_count = 0; cat; category_count++)
+        {
+            cat &= cat-1; // clear least significant bit set
         }
 
-        // NP:  WTF?  if _any_ log line has no checklist ignore the following ones?
-        if (!checklist)
-            break;
+        categories = (char**)xcalloc(category_count, sizeof(char*));
+
+        cat = al->category;
+        uint32_t bit = 0;
+        int j = 0;
+        while (cat)
+        {
+            if (cat & 0x0000000000000001ULL)
+            {
+                if (bit > DEFINED_TITAX_CATEGORIES)
+                {
+                    // Custom category - pass as string
+                    const char* catname = categoryGetName(bit);
+                    int sz = strlen(catname) + 1;
+                    categories[j] = (char*)xcalloc(sz, sizeof(char));
+                    strcpy(categories[j], catname);
+                }
+                else
+                {
+                    int sz = snprintf(NULL, 0, "%d", bit) + 1;
+                    categories[j] = (char*)xcalloc(sz, sizeof(char));
+                    snprintf(categories[j], sz, "%d", bit);
+                }
+                j++;
+            }
+            cat = cat >> 1;
+            bit++;
+        }
     }
+
+    /*
+    // Titax.
+    if(titax_conf_is_enable_auth()){
+        if ((al->request->authenticated_username) && (!al->request->anonymous_webtitan_user)){
+            titax_user_info_dic_inc_byte(al->request->authenticated_username, resp_size);
+        }
+//      titax_user_info_dic_print_all();
+    }
+    */
+
+    send_log_data2(
+        al->request->loggable_username,// username
+        groups,                 // groups
+        group_count,            // group count
+        al->cache.caddr.s_addr(), // IP address
+        categories,             // categories
+        category_count,         // category count
+        al->url, // URL
+        al->cache.msec,         // Duration
+        resp_size,         // Object Size
+        2,                      // No blocking source
+        NULL,                   // No reason
+        cacheHit,               // Cached
+        NULL,                   // no notifications
+        0                       // no notifications
+        );
+
+    int i = 0;
+    for (i = 0 ; i < group_count ; ++i)
+    {
+        xfree(groups[i]);
+    }
+    xfree(groups);
+
+    for (i = 0 ; i < category_count ; ++i)
+    {
+        xfree(categories[i]);
+    }
+    xfree(categories);
 }
 
 void
@@ -158,8 +492,8 @@ accessLogLog(AccessLogEntry::Pointer &al, ACLChecklist * checklist)
     else {
         unsigned int ibuf[365];
         size_t isize;
-        xstrncpy((char *) ibuf, al->url.c_str(), 364 * sizeof(int));
-        isize = ((al->url.length() + 8) / 8) * 2;
+        xstrncpy((char *) ibuf, al->url, 364 * sizeof(int));
+        isize = ((strlen(al->url) + 8) / 8) * 2;
 
         if (isize > 364)
             isize = 364;
@@ -186,14 +520,13 @@ accessLogRotate(void)
 
     for (log = Config.Log.accesslogs; log; log = log->next) {
         if (log->logfile) {
-            int16_t rc = (log->rotateCount >= 0 ? log->rotateCount : Config.Log.rotateNumber);
-            logfileRotate(log->logfile, rc);
+            logfileRotate(log->logfile);
         }
     }
 
 #if HEADERS_LOG
 
-    logfileRotate(headerslog, Config.Log.rotateNumber);
+    logfileRotate(headerslog);
 
 #endif
 }
@@ -225,8 +558,10 @@ HierarchyLogEntry::HierarchyLogEntry() :
     n_choices(0),
     n_ichoices(0),
     peer_reply_status(Http::scNone),
+    peer_response_time(-1),
     tcpServer(NULL),
-    bodyBytesRead(-1)
+    bodyBytesRead(-1),
+    totalResponseTime_(-1)
 {
     memset(host, '\0', SQUIDHOSTNAMELEN);
     memset(cd_host, '\0', SQUIDHOSTNAMELEN);
@@ -237,20 +572,16 @@ HierarchyLogEntry::HierarchyLogEntry() :
     store_complete_stop.tv_sec =0;
     store_complete_stop.tv_usec =0;
 
-    clearPeerNotes();
-
-    totalResponseTime_.tv_sec = -1;
-    totalResponseTime_.tv_usec = 0;
+    peer_http_request_sent.tv_sec = 0;
+    peer_http_request_sent.tv_usec = 0;
 
     firstConnStart_.tv_sec = 0;
     firstConnStart_.tv_usec = 0;
 }
 
 void
-HierarchyLogEntry::resetPeerNotes(const Comm::ConnectionPointer &server, const char *requestedHost)
+HierarchyLogEntry::note(const Comm::ConnectionPointer &server, const char *requestedHost)
 {
-    clearPeerNotes();
-
     tcpServer = server;
     if (tcpServer == NULL) {
         code = HIER_NONE;
@@ -267,31 +598,6 @@ HierarchyLogEntry::resetPeerNotes(const Comm::ConnectionPointer &server, const c
     }
 }
 
-/// forget previous notePeerRead() and notePeerWrite() calls (if any)
-void
-HierarchyLogEntry::clearPeerNotes()
-{
-    peer_last_read_.tv_sec = 0;
-    peer_last_read_.tv_usec = 0;
-
-    peer_last_write_.tv_sec = 0;
-    peer_last_write_.tv_usec = 0;
-
-    bodyBytesRead = -1;
-}
-
-void
-HierarchyLogEntry::notePeerRead()
-{
-    peer_last_read_ = current_time;
-}
-
-void
-HierarchyLogEntry::notePeerWrite()
-{
-    peer_last_write_ = current_time;
-}
-
 void
 HierarchyLogEntry::startPeerClock()
 {
@@ -304,53 +610,24 @@ HierarchyLogEntry::stopPeerClock(const bool force)
 {
     debugs(46, 5, "First connection started: " << firstConnStart_.tv_sec << "." <<
            std::setfill('0') << std::setw(6) << firstConnStart_.tv_usec <<
-           ", current total response time value: " << (totalResponseTime_.tv_sec * 1000 +  totalResponseTime_.tv_usec/1000) <<
+           ", current total response time value: " << totalResponseTime_ <<
            (force ? ", force fixing" : ""));
-    if (!force && totalResponseTime_.tv_sec != -1)
+    if (!force && totalResponseTime_ >= 0)
         return;
 
-    if (firstConnStart_.tv_sec)
-        tvSub(totalResponseTime_, firstConnStart_, current_time);
+    totalResponseTime_ = firstConnStart_.tv_sec ? tvSubMsec(firstConnStart_, current_time) : -1;
 }
 
-bool
-HierarchyLogEntry::peerResponseTime(struct timeval &responseTime)
-{
-    // no I/O whatsoever
-    if (peer_last_write_.tv_sec <= 0 && peer_last_read_.tv_sec <= 0)
-        return false;
-
-    // accommodate read without (completed) write
-    const auto last_write = peer_last_write_.tv_sec > 0 ?
-                            peer_last_write_ : peer_last_read_;
-
-    // accommodate write without (completed) read
-    const auto last_read = peer_last_read_.tv_sec > 0 ?
-                           peer_last_read_ : peer_last_write_;
-
-    tvSub(responseTime, last_write, last_read);
-    // The peer response time (%<pt) stopwatch is currently defined to start
-    // when we wrote the entire request. Thus, if we wrote something after the
-    // last read, report zero peer response time.
-    if (responseTime.tv_sec < 0) {
-        responseTime.tv_sec = 0;
-        responseTime.tv_usec = 0;
-    }
-
-    return true;
-}
-
-bool
-HierarchyLogEntry::totalResponseTime(struct timeval &responseTime)
+int64_t
+HierarchyLogEntry::totalResponseTime()
 {
     // This should not really happen, but there may be rare code
     // paths that lead to FwdState discarded (or transaction logged)
     // without (or before) a stopPeerClock() call.
-    if (firstConnStart_.tv_sec && totalResponseTime_.tv_sec == -1)
+    if (firstConnStart_.tv_sec && totalResponseTime_ < 0)
         stopPeerClock(false);
 
-    responseTime = totalResponseTime_;
-    return responseTime.tv_sec >= 0 && responseTime.tv_usec >= 0;
+    return totalResponseTime_;
 }
 
 static void
@@ -445,10 +722,26 @@ accessLogInit(void)
 #if USE_FORW_VIA_DB
 
 static void
-fvdbInit(void)
-{
-    via_table = hash_create((HASHCMP *) strcmp, 977, hash4);
-    forw_table = hash_create((HASHCMP *) strcmp, 977, hash4);
+fvdbClear(void){
+   if (via_table!=NULL){
+      hashFreeItems(via_table, fvdbFreeEntry);
+      hashFreeMemory(via_table);
+      via_table=NULL;
+   };
+   via_table = hash_create((HASHCMP *) strcmp, 977, hash4);
+   if (forw_table!=NULL){
+      hashFreeItems(forw_table, fvdbFreeEntry);
+      hashFreeMemory(forw_table);
+      forw_table=NULL;
+   };
+   forw_table = hash_create((HASHCMP *) strcmp, 977, hash4);
+}
+
+static void
+fvdbInit(void){
+   fvdbClear();
+   //via_table = hash_create((HASHCMP *) strcmp, 977, hash4);
+   //forw_table = hash_create((HASHCMP *) strcmp, 977, hash4);
 }
 
 static void
@@ -472,6 +765,7 @@ fvdbCount(hash_table * hash, const char *key)
     if (NULL == fv) {
         fv = static_cast <fvdb_entry *>(xcalloc(1, sizeof(fvdb_entry)));
         fv->hash.key = xstrdup(key);
+        fv->hash.next=NULL;
         hash_join(hash, &fv->hash);
     }
 
@@ -521,23 +815,17 @@ fvdbDumpForw(StoreEntry * e)
 
 static
 void
-fvdbFreeEntry(void *data)
+fvdbFreeEntry(void *const data)
 {
-    fvdb_entry *fv = static_cast <fvdb_entry *>(data);
-    xfree(fv->hash.key);
-    xfree(fv);
+   try{
+    if (const fvdb_entry *const fv = static_cast <const fvdb_entry *const>(data)){
+       xfree(fv->hash.key);
+       xfree(fv);
+    }
+   }catch(...){}
 }
 
-static void
-fvdbClear(void)
-{
-    hashFreeItems(via_table, fvdbFreeEntry);
-    hashFreeMemory(via_table);
-    via_table = hash_create((HASHCMP *) strcmp, 977, hash4);
-    hashFreeItems(forw_table, fvdbFreeEntry);
-    hashFreeMemory(forw_table);
-    forw_table = hash_create((HASHCMP *) strcmp, 977, hash4);
-}
+
 
 #endif
 

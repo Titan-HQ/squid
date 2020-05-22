@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -19,8 +19,8 @@
 #include "errorpage.h"
 #include "fd.h"
 #include "ftp/Parsing.h"
-#include "http/Stream.h"
 #include "ip/tools.h"
+#include "Mem.h"
 #include "SquidConfig.h"
 #include "SquidString.h"
 #include "StatCounters.h"
@@ -314,11 +314,10 @@ Ftp::Client::scheduleReadControlReply(int buffered_ok)
         /* We've already read some reply data */
         handleControlReply();
     } else {
-
-        if (!Comm::IsConnOpen(ctrl.conn)) {
-            debugs(9, 3, "cannot read without ctrl " << ctrl.conn);
-            return;
-        }
+	if (!Comm::IsConnOpen(ctrl.conn)) {
+	    debugs(9, 3, "cannot read without ctrl " << ctrl.conn);
+	    return;
+	}
         /*
          * Cancel the timeout on the Data socket (if any) and
          * establish one on the control socket.
@@ -348,16 +347,16 @@ Ftp::Client::readControlReply(const CommIoCbParams &io)
     debugs(9, 3, "FD " << io.fd << ", Read " << io.size << " bytes");
 
     if (io.size > 0) {
-        statCounter.server.all.kbytes_in += io.size;
-        statCounter.server.ftp.kbytes_in += io.size;
+        kb_incr(&(statCounter.server.all.kbytes_in), io.size);
+        kb_incr(&(statCounter.server.ftp.kbytes_in), io.size);
     }
 
     if (io.flag == Comm::ERR_CLOSING)
         return;
 
     if (EBIT_TEST(entry->flags, ENTRY_ABORTED)) {
-        if (abortOnData("entry aborted during control reply read"))
-            return;
+        abortTransaction("entry aborted during control reply read");
+        return;
     }
 
     assert(ctrl.offset < ctrl.size);
@@ -387,7 +386,7 @@ Ftp::Client::readControlReply(const CommIoCbParams &io)
         }
 
         /* XXX this may end up having to be serverComplete() .. */
-        abortAll("zero control reply read");
+        abortTransaction("zero control reply read");
         return;
     }
 
@@ -443,10 +442,10 @@ Ftp::Client::handlePasvReply(Ip::Address &srvAddr)
     debugs(9, 3, status());
 
     if (!Comm::IsConnOpen(ctrl.conn)) {
-        debugs(9, 5, "The control connection to the remote end is closed");
-        return false;
+	debugs(9, 5, "The control connection to the remote end is closed");
+	return false;
     }
-
+    
     if (code != 227) {
         debugs(9, 2, "PASV not supported by remote end");
         return false;
@@ -479,10 +478,10 @@ Ftp::Client::handleEpsvReply(Ip::Address &remoteAddr)
     debugs(9, 3, status());
 
     if (!Comm::IsConnOpen(ctrl.conn)) {
-        debugs(9, 5, "The control connection to the remote end is closed");
-        return false;
+	debugs(9, 5, "The control connection to the remote end is closed");
+	return false;
     }
-
+    
     if (code != 229 && code != 522) {
         if (code == 200) {
             /* handle broken servers (RFC 2428 says OK code for EPSV MUST be 229 not 200) */
@@ -536,8 +535,6 @@ Ftp::Client::handleEpsvReply(Ip::Address &remoteAddr)
             debugs(9, DBG_IMPORTANT, "WARNING: Server at " << ctrl.conn->remote << " sent unknown protocol negotiation hint: " << buf);
             return sendPassive();
         }
-        /* coverity[unreachable] */
-        /* safeguard against possible future bugs in above conditions */
         failed(ERR_FTP_FAILURE, 0);
         return false;
     }
@@ -616,10 +613,10 @@ Ftp::Client::sendEprt()
     /* RFC 2428 defines EPRT as IPv6 equivalent to IPv4 PORT command. */
     /* Which can be used by EITHER protocol. */
     debugs(9, 3, "Listening for FTP data connection on port" << comm_local_port(data.conn->fd) << " or port?" << data.conn->local.port());
-    mb.appendf("EPRT |%d|%s|%d|%s",
-               ( data.conn->local.isIPv6() ? 2 : 1 ),
-               data.conn->local.toStr(buf,MAX_IPSTRLEN),
-               comm_local_port(data.conn->fd), Ftp::crlf );
+    mb.Printf("EPRT |%d|%s|%d|%s",
+              ( data.conn->local.isIPv6() ? 2 : 1 ),
+              data.conn->local.toStr(buf,MAX_IPSTRLEN),
+              comm_local_port(data.conn->fd), Ftp::crlf );
 
     state = SENT_EPRT;
     writeCommand(mb.content());
@@ -676,7 +673,7 @@ Ftp::Client::sendPassive()
     case SENT_EPSV_ALL: /* EPSV ALL resulted in a bad response. Try ther EPSV methods. */
         if (ctrl.conn->local.isIPv6()) {
             debugs(9, 5, "FTP Channel is IPv6 (" << ctrl.conn->remote << ") attempting EPSV 2 after EPSV ALL has failed.");
-            mb.appendf("EPSV 2%s", Ftp::crlf);
+            mb.Printf("EPSV 2%s", Ftp::crlf);
             state = SENT_EPSV_2;
             break;
         }
@@ -685,7 +682,7 @@ Ftp::Client::sendPassive()
     case SENT_EPSV_2: /* EPSV IPv6 failed. Try EPSV IPv4 */
         if (ctrl.conn->local.isIPv4()) {
             debugs(9, 5, "FTP Channel is IPv4 (" << ctrl.conn->remote << ") attempting EPSV 1 after EPSV ALL has failed.");
-            mb.appendf("EPSV 1%s", Ftp::crlf);
+            mb.Printf("EPSV 1%s", Ftp::crlf);
             state = SENT_EPSV_1;
             break;
         } else if (Config.Ftp.epsv_all) {
@@ -697,7 +694,7 @@ Ftp::Client::sendPassive()
 
     case SENT_EPSV_1: /* EPSV options exhausted. Try PASV now. */
         debugs(9, 5, "FTP Channel (" << ctrl.conn->remote << ") rejects EPSV connection attempts. Trying PASV instead.");
-        mb.appendf("PASV%s", Ftp::crlf);
+        mb.Printf("PASV%s", Ftp::crlf);
         state = SENT_PASV;
         break;
 
@@ -705,25 +702,25 @@ Ftp::Client::sendPassive()
         bool doEpsv = true;
         if (Config.accessList.ftp_epsv) {
             ACLFilledChecklist checklist(Config.accessList.ftp_epsv, fwd->request, NULL);
-            doEpsv = checklist.fastCheck().allowed();
+            doEpsv = (checklist.fastCheck() == ACCESS_ALLOWED);
         }
         if (!doEpsv) {
             debugs(9, 5, "EPSV support manually disabled. Sending PASV for FTP Channel (" << ctrl.conn->remote <<")");
-            mb.appendf("PASV%s", Ftp::crlf);
+            mb.Printf("PASV%s", Ftp::crlf);
             state = SENT_PASV;
         } else if (Config.Ftp.epsv_all) {
             debugs(9, 5, "EPSV ALL manually enabled. Attempting with FTP Channel (" << ctrl.conn->remote <<")");
-            mb.appendf("EPSV ALL%s", Ftp::crlf);
+            mb.Printf("EPSV ALL%s", Ftp::crlf);
             state = SENT_EPSV_ALL;
         } else {
             if (ctrl.conn->local.isIPv6()) {
                 debugs(9, 5, "FTP Channel (" << ctrl.conn->remote << "). Sending default EPSV 2");
-                mb.appendf("EPSV 2%s", Ftp::crlf);
+                mb.Printf("EPSV 2%s", Ftp::crlf);
                 state = SENT_EPSV_2;
             }
             if (ctrl.conn->local.isIPv4()) {
                 debugs(9, 5, "Channel (" << ctrl.conn->remote <<"). Sending default EPSV 1");
-                mb.appendf("EPSV 1%s", Ftp::crlf);
+                mb.Printf("EPSV 1%s", Ftp::crlf);
                 state = SENT_EPSV_1;
             }
         }
@@ -746,10 +743,10 @@ void
 Ftp::Client::connectDataChannel()
 {
     if (!Comm::IsConnOpen(ctrl.conn)) {
-        debugs(9, 5, "The control connection to the remote end is closed");
-        return;
+	debugs(9, 5, "The control connection to the remote end is closed");
+	return;
     }
-
+    
     safe_free(ctrl.last_command);
 
     safe_free(ctrl.last_reply);
@@ -763,8 +760,6 @@ Ftp::Client::connectDataChannel()
     conn->remote.port(data.port);
     conn->tos = ctrl.conn->tos;
     conn->nfmark = ctrl.conn->nfmark;
-    // Using non-local addresses in TPROXY mode requires appropriate socket option.
-    conn->flags |= ctrl.conn->flags & COMM_TRANSPARENT;
 
     debugs(9, 3, "connecting to " << conn->remote);
 
@@ -791,7 +786,7 @@ Ftp::Client::dataCloser()
 
 /// handler called by Comm when FTP data channel is closed unexpectedly
 void
-Ftp::Client::dataClosed(const CommCloseCbParams &)
+Ftp::Client::dataClosed(const CommCloseCbParams &io)
 {
     debugs(9, 4, status());
     if (data.listenConn != NULL) {
@@ -842,8 +837,8 @@ Ftp::Client::writeCommandCallback(const CommIoCbParams &io)
 
     if (io.size > 0) {
         fd_bytes(io.fd, io.size, FD_WRITE);
-        statCounter.server.all.kbytes_out += io.size;
-        statCounter.server.ftp.kbytes_out += io.size;
+        kb_incr(&(statCounter.server.all.kbytes_out), io.size);
+        kb_incr(&(statCounter.server.ftp.kbytes_out), io.size);
     }
 
     if (io.flag == Comm::ERR_CLOSING)
@@ -859,11 +854,10 @@ Ftp::Client::writeCommandCallback(const CommIoCbParams &io)
 
 /// handler called by Comm when FTP control channel is closed unexpectedly
 void
-Ftp::Client::ctrlClosed(const CommCloseCbParams &)
+Ftp::Client::ctrlClosed(const CommCloseCbParams &io)
 {
     debugs(9, 4, status());
     ctrl.clear();
-    doneWithFwd = "ctrlClosed()"; // assume FwdState is monitoring too
     mustStop("Ftp::Client::ctrlClosed");
 }
 
@@ -929,8 +923,8 @@ Ftp::Client::dataRead(const CommIoCbParams &io)
     debugs(9, 3, "FD " << io.fd << " Read " << io.size << " bytes");
 
     if (io.size > 0) {
-        statCounter.server.all.kbytes_in += io.size;
-        statCounter.server.ftp.kbytes_in += io.size;
+        kb_incr(&(statCounter.server.all.kbytes_in), io.size);
+        kb_incr(&(statCounter.server.ftp.kbytes_in), io.size);
     }
 
     if (io.flag == Comm::ERR_CLOSING)
@@ -939,7 +933,7 @@ Ftp::Client::dataRead(const CommIoCbParams &io)
     assert(io.fd == data.conn->fd);
 
     if (EBIT_TEST(entry->flags, ENTRY_ABORTED)) {
-        abortOnData("entry aborted during dataRead");
+        abortTransaction("entry aborted during dataRead");
         return;
     }
 
@@ -1016,12 +1010,24 @@ Ftp::Client::dataComplete()
     scheduleReadControlReply(1);
 }
 
+/**
+ * Quickly abort the transaction
+ *
+ \todo destruction should be sufficient as the destructor should cleanup,
+ * including canceling close handlers
+ */
 void
-Ftp::Client::abortAll(const char *reason)
+Ftp::Client::abortTransaction(const char *reason)
 {
     debugs(9, 3, "aborting transaction for " << reason <<
            "; FD " << (ctrl.conn!=NULL?ctrl.conn->fd:-1) << ", Data FD " << (data.conn!=NULL?data.conn->fd:-1) << ", this " << this);
-    mustStop(reason);
+    if (Comm::IsConnOpen(ctrl.conn)) {
+        ctrl.conn->close();
+        return;
+    }
+
+    fwd->handleUnregisteredServerEnd();
+    mustStop("Ftp::Client::abortTransaction");
 }
 
 /**
@@ -1043,7 +1049,7 @@ void
 Ftp::Client::sentRequestBody(const CommIoCbParams &io)
 {
     if (io.size > 0)
-        statCounter.server.ftp.kbytes_out += io.size;
+        kb_incr(&(statCounter.server.ftp.kbytes_out), io.size);
     ::Client::sentRequestBody(io);
 }
 

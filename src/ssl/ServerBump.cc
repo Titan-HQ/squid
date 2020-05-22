@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -9,64 +9,66 @@
 /* DEBUG: section 33    Client-side Routines */
 
 #include "squid.h"
-#include "anyp/Uri.h"
+
 #include "client_side.h"
 #include "FwdState.h"
-#include "http/Stream.h"
+#include "globals.h"
 #include "ssl/ServerBump.h"
 #include "Store.h"
 #include "StoreClient.h"
+#include "URL.h"
 
 CBDATA_NAMESPACED_CLASS_INIT(Ssl, ServerBump);
 
+//temporary change to add more traceability
+static uint64_t _ctx=0;
+
 Ssl::ServerBump::ServerBump(HttpRequest *fakeRequest, StoreEntry *e, Ssl::BumpMode md):
-    request(fakeRequest),
-    step(bumpStep1)
+   request(fakeRequest),
+   _entry(*({
+      StoreEntry * __entry=e;
+      if (!__entry){
+         const char *uri = urlCanonical(fakeRequest);
+         __entry = storeCreateEntry(uri, uri, fakeRequest->flags, fakeRequest->method);
+      } else __entry->lock("Ssl::ServerBump");
+      __entry;
+   })),
+   step(bumpStep1),
+   _id(++_ctx)
 {
-    debugs(33, 4, "will peek at " << request->url.authority(true));
+
+    debugs(33, 4, HERE << "will peek at " << request->GetHost() << ':' << request->port);
     act.step1 = md;
     act.step2 = act.step3 = Ssl::bumpNone;
-
-    if (e) {
-        entry = e;
-        entry->lock("Ssl::ServerBump");
-    } else {
-        // XXX: Performance regression. c_str() reallocates
-        SBuf uriBuf(request->effectiveRequestUri());
-        const char *uri = uriBuf.c_str();
-        entry = storeCreateEntry(uri, uri, request->flags, request->method);
-    }
     // We do not need to be a client because the error contents will be used
     // later, but an entry without any client will trim all its contents away.
-    sc = storeClientListAdd(entry, this);
+
+    sc = storeClientListAdd(&_entry, this);
 }
 
 Ssl::ServerBump::~ServerBump()
 {
-    debugs(33, 4, HERE << "destroying");
-    if (entry) {
-        debugs(33, 4, HERE << *entry);
-        storeUnregister(sc, entry, this);
-        entry->unlock("Ssl::ServerBump");
-    }
+   debugs(33, 4, HERE << "destroying " << _entry);
+   storeUnregister(sc, &_entry, this);
+   _entry.unlock("Ssl::ServerBump");
 }
 
 void
-Ssl::ServerBump::attachServerSession(const Security::SessionPointer &s)
+Ssl::ServerBump::attachServerSSL(SSL *ssl)
 {
-    if (serverSession)
+    if (serverSSL.get())
         return;
 
-    serverSession = s;
+    serverSSL.resetAndLock(ssl);
 }
 
-const Security::CertErrors *
+const Ssl::CertErrors *
 Ssl::ServerBump::sslErrors() const
 {
-    if (!serverSession)
+    if (!serverSSL.get())
         return NULL;
 
-    const Security::CertErrors *errs = static_cast<const Security::CertErrors*>(SSL_get_ex_data(serverSession.get(), ssl_ex_index_ssl_errors));
+    const Ssl::CertErrors *errs = static_cast<const Ssl::CertErrors*>(SSL_get_ex_data(serverSSL.get(), ssl_ex_index_ssl_errors));
     return errs;
 }
 

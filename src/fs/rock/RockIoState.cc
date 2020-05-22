@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -18,6 +18,7 @@
 #include "fs/rock/RockIoState.h"
 #include "fs/rock/RockSwapDir.h"
 #include "globals.h"
+#include "Mem.h"
 #include "MemObject.h"
 #include "Parsing.h"
 #include "Transients.h"
@@ -26,21 +27,21 @@ Rock::IoState::IoState(Rock::SwapDir::Pointer &aDir,
                        StoreEntry *anEntry,
                        StoreIOState::STFNCB *cbFile,
                        StoreIOState::STIOCB *cbIo,
-                       void *data) :
-    StoreIOState(cbFile, cbIo, data),
+                       void *data):
     readableAnchor_(NULL),
     writeableAnchor_(NULL),
-    splicingPoint(-1),
-    staleSplicingPointNext(-1),
+    sidCurrent(-1),
     dir(aDir),
     slotSize(dir->slotSize),
     objOffset(0),
-    sidCurrent(-1),
     theBuf(dir->slotSize)
 {
     e = anEntry;
     e->lock("rock I/O");
     // anchor, swap_filen, and swap_dirn are set by the caller
+    file_callback = cbFile;
+    callback = cbIo;
+    callback_data = cbdataReference(data);
     ++store_open_disk_fd; // TODO: use a dedicated counter?
     //theFile is set by SwapDir because it depends on DiskIOStrategy
 }
@@ -134,11 +135,6 @@ void
 Rock::IoState::callReaderBack(const char *buf, int rlen)
 {
     debugs(79, 5, rlen << " bytes for " << *e);
-    splicingPoint = rlen >= 0 ? sidCurrent : -1;
-    if (splicingPoint < 0)
-        staleSplicingPointNext = -1;
-    else
-        staleSplicingPointNext = currentReadableSlice().next;
     StoreIOState::STRCB *callb = read.callback;
     assert(callb);
     read.callback = NULL;
@@ -157,7 +153,7 @@ Rock::IoState::write(char const *buf, size_t size, off_t coreOff, FREE *dtor)
         success = true;
     } catch (const std::exception &ex) { // TODO: should we catch ... as well?
         debugs(79, 2, "db write error: " << ex.what());
-        dir->writeError(*this);
+        dir->writeError(*e);
         finishedWriting(DISK_ERROR);
         // 'this' might be gone beyond this point; fall through to free buf
     }
@@ -184,9 +180,6 @@ Rock::IoState::tryWrite(char const *buf, size_t size, off_t coreOff)
     // either this is the first write or append; we do not support write gaps
     assert(!coreOff || coreOff == -1);
 
-    // throw if an accepted unknown-size entry grew too big or max-size changed
-    Must(static_cast<uint64_t>(offset_ + size) <= static_cast<uint64_t>(dir->maxObjectSize()));
-
     // allocate the first slice during the first write
     if (!coreOff) {
         assert(sidCurrent < 0);
@@ -212,7 +205,7 @@ Rock::IoState::tryWrite(char const *buf, size_t size, off_t coreOff)
             writeToDisk(sidNext);
         } else if (Store::Root().transientReaders(*e)) {
             // write partial buffer for all remote hit readers to see
-            writeBufToDisk(-1, false, false);
+            writeBufToDisk(-1, false);
         }
     }
 
@@ -241,24 +234,15 @@ Rock::IoState::writeToBuffer(char const *buf, size_t size)
 /// write what was buffered during write() calls
 /// negative sidNext means this is the last write request for this entry
 void
-Rock::IoState::writeToDisk(const SlotId sidNextProposal)
+Rock::IoState::writeToDisk(const SlotId sidNext)
 {
     assert(theFile != NULL);
     assert(theBuf.size >= sizeof(DbCellHeader));
 
-    const bool lastWrite = sidNextProposal < 0;
-    const bool eof = lastWrite &&
-                     // either not updating or the updating reader has loaded everything
-                     (touchingStoreEntry() || staleSplicingPointNext < 0);
-    // approve sidNextProposal unless _updating_ the last slot
-    const SlotId sidNext = (!touchingStoreEntry() && lastWrite) ?
-                           staleSplicingPointNext : sidNextProposal;
-    debugs(79, 5, "sidNext:" << sidNextProposal << "=>" << sidNext << " eof=" << eof);
-
     // TODO: if DiskIO module is mmap-based, we should be writing whole pages
     // to avoid triggering read-page;new_head+old_tail;write-page overheads
 
-    writeBufToDisk(sidNext, eof, lastWrite);
+    writeBufToDisk(sidNext, sidNext < 0);
     theBuf.clear();
 
     sidCurrent = sidNext;
@@ -267,7 +251,7 @@ Rock::IoState::writeToDisk(const SlotId sidNextProposal)
 /// creates and submits a request to write current slot buffer to disk
 /// eof is true if and only this is the last slot
 void
-Rock::IoState::writeBufToDisk(const SlotId sidNext, const bool eof, const bool lastWrite)
+Rock::IoState::writeBufToDisk(const SlotId sidNext, bool eof)
 {
     // no slots after the last/eof slot (but partial slots may have a nil next)
     assert(!eof || sidNext < 0);
@@ -300,7 +284,7 @@ Rock::IoState::writeBufToDisk(const SlotId sidNext, const bool eof, const bool l
                        memFreeBufFunc(wBufCap)), this);
     r->sidCurrent = sidCurrent;
     r->sidNext = sidNext;
-    r->eof = lastWrite;
+    r->eof = eof;
 
     // theFile->write may call writeCompleted immediatelly
     theFile->write(r);
@@ -326,8 +310,7 @@ Rock::IoState::finishedWriting(const int errFlag)
 {
     // we incremented offset_ while accumulating data in write()
     // we do not reset writeableAnchor_ here because we still keep the lock
-    if (touchingStoreEntry())
-        CollapsedForwarding::Broadcast(*e);
+    CollapsedForwarding::Broadcast(*e);
     callBack(errFlag);
 }
 
@@ -352,7 +335,8 @@ Rock::IoState::close(int how)
         return; // writeCompleted() will callBack()
 
     case writerGone:
-        dir->writeError(*this); // abort a partially stored entry
+        assert(writeableAnchor_);
+        dir->writeError(*e); // abort a partially stored entry
         finishedWriting(DISK_ERROR);
         return;
 
@@ -391,13 +375,13 @@ public:
         cbdataReferenceDone(callback_data); // may be nil already
     }
 
-    void dial(AsyncCall &) {
+    void dial(AsyncCall &call) {
         void *cbd;
         if (cbdataReferenceValidDone(callback_data, &cbd) && callback)
             callback(cbd, errflag, sio.getRaw());
     }
 
-    bool canDial(AsyncCall &) const {
+    bool canDial(AsyncCall &call) const {
         return cbdataReferenceValid(callback_data) && callback;
     }
 
@@ -406,7 +390,7 @@ public:
     }
 
 private:
-    StoreIOStateCb &operator =(const StoreIOStateCb &); // not defined
+    StoreIOStateCb &operator =(const StoreIOStateCb &cb); // not defined
 
     StoreIOState::STIOCB *callback;
     void *callback_data;

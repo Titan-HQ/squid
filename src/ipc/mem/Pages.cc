@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -13,6 +13,7 @@
 #include "base/TextException.h"
 #include "ipc/mem/PagePool.h"
 #include "ipc/mem/Pages.h"
+#include "SwapDir.h"
 #include "tools.h"
 
 // Uses a single PagePool instance, for now.
@@ -131,6 +132,9 @@ SharedMemPagesRr::open()
 
 SharedMemPagesRr::~SharedMemPagesRr()
 {
+    if (!UsingSmp())
+        return;
+
     delete ThePagePool;
     ThePagePool = NULL;
     delete owner;

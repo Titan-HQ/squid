@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -252,17 +252,31 @@ CommTimeoutCbPtrFun::print(std::ostream &os) const
 }
 
 /* FdeCbPtrFun */
-
+/*
 FdeCbPtrFun::FdeCbPtrFun(FDECB *aHandler, const FdeCbParams &aParams) :
     CommDialerParamsT<FdeCbParams>(aParams),
     handler(aHandler)
 {
+   _empty=((-1!=this->params.fd || this->params.conn!=NULL )?false:true);
+
+}
+*/
+FdeCbPtrFun::FdeCbPtrFun(FDECB *aHandler, const int fd):
+      CommDialerParamsT<FdeCbParams>((FdeCbParams*const)0),
+      handler(aHandler){
+
+   _empty=(-1==(this->params.fd=fd)?true:false);
 }
 
 void
 FdeCbPtrFun::dial()
 {
-    handler(params);
+
+   if (!_empty){
+      handler(params);
+      return;
+   };
+   handler(NULL);
 }
 
 void

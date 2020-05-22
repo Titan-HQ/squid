@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -63,37 +63,48 @@ void Adaptation::History::recordXactFinish(int hid)
     theEntries[hid].stop();
 }
 
-void Adaptation::History::allLogString(const char *serviceId, SBuf &s)
+void Adaptation::History::allLogString(const char *serviceId, String &s)
 {
-    s.clear();
+    s="";
     bool prevWasRetried = false;
-    for (auto &i : theEntries) {
+    // XXX: Fix Vector<> so that we can use const_iterator here
+    typedef Adaptation::History::Entries::iterator ECI;
+    for (ECI i = theEntries.begin(); i != theEntries.end(); ++i) {
         // TODO: here and below, optimize service ID comparison?
-        if (!serviceId || i.service == serviceId) {
-            if (!s.isEmpty()) // not the first logged time, must delimit
-                s.append(prevWasRetried ? '+' : ',');
-            s.appendf("%d", i.rptm());
+        if (!serviceId || i->service == serviceId) {
+            if (s.size() > 0) // not the first logged time, must delimit
+                s.append(prevWasRetried ? "+" : ",");
+
+            char buf[64];
+            snprintf(buf, sizeof(buf), "%d", i->rptm());
+            s.append(buf);
+
             // continue; we may have two identical services (e.g., for retries)
         }
-        prevWasRetried = i.retried;
+        prevWasRetried = i->retried;
     }
 }
 
-void Adaptation::History::sumLogString(const char *serviceId, SBuf &s)
+void Adaptation::History::sumLogString(const char *serviceId, String &s)
 {
-    s.clear();
+    s="";
     int retriedRptm = 0; // sum of rptm times of retried transactions
-    for (auto & i : theEntries) {
-        if (i.retried) { // do not log retried xact but accumulate their time
-            retriedRptm += i.rptm();
-        } else if (!serviceId || i.service == serviceId) {
-            if (!s.isEmpty()) // not the first logged time, must delimit
-                s.append(',');
-            s.appendf("%d", retriedRptm + i.rptm());
+    typedef Adaptation::History::Entries::iterator ECI;
+    for (ECI i = theEntries.begin(); i != theEntries.end(); ++i) {
+        if (i->retried) { // do not log retried xact but accumulate their time
+            retriedRptm += i->rptm();
+        } else if (!serviceId || i->service == serviceId) {
+            if (s.size() > 0) // not the first logged time, must delimit
+                s.append(",");
+
+            char buf[64];
+            snprintf(buf, sizeof(buf), "%d", retriedRptm + i->rptm());
+            s.append(buf);
+
             // continue; we may have two identical services (e.g., for retries)
         }
 
-        if (!i.retried)
+        if (!i->retried)
             retriedRptm = 0;
     }
 

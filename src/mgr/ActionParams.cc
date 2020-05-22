@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -12,7 +12,6 @@
 #include "base/TextException.h"
 #include "ipc/TypedMsgHdr.h"
 #include "mgr/ActionParams.h"
-#include "sbuf/StringConvert.h"
 
 Mgr::ActionParams::ActionParams(): httpMethod(Http::METHOD_NONE)
 {
@@ -24,7 +23,7 @@ Mgr::ActionParams::ActionParams(const Ipc::TypedMsgHdr &msg)
 
     String method;
     msg.getString(method);
-    httpMethod.HttpRequestMethodXXX(method.termedBuf());
+    httpMethod = HttpRequestMethod(method.termedBuf(), NULL);
 
     msg.getPod(httpFlags);
     msg.getString(httpOrigin);
@@ -39,7 +38,7 @@ void
 Mgr::ActionParams::pack(Ipc::TypedMsgHdr &msg) const
 {
     msg.putString(httpUri);
-    auto foo = SBufToString(httpMethod.image());
+    String foo(httpMethod.image().toString());
     msg.putString(foo);
     msg.putPod(httpFlags);
     msg.putString(httpOrigin);

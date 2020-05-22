@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -11,47 +11,29 @@
 #include "squid.h"
 #include "base/TextException.h"
 #include "ipc/TypedMsgHdr.h"
-#include "SquidString.h"
 #include "tools.h"
 
 #include <cstring>
 
 Ipc::TypedMsgHdr::TypedMsgHdr()
 {
-    clear();
+    memset(this, 0, sizeof(*this));
     sync();
 }
 
 Ipc::TypedMsgHdr::TypedMsgHdr(const TypedMsgHdr &tmh)
 {
-    clear();
-    operator =(tmh);
+    memcpy(this, &tmh, sizeof(*this));
+    sync();
 }
 
 Ipc::TypedMsgHdr &Ipc::TypedMsgHdr::operator =(const TypedMsgHdr &tmh)
 {
     if (this != &tmh) { // skip assignment to self
-        memcpy(static_cast<msghdr*>(this), static_cast<const msghdr*>(&tmh), sizeof(msghdr));
-        name = tmh.name;
-        memcpy(&ios, &tmh.ios, sizeof(ios));
-        data = tmh.data;
-        ctrl = tmh.ctrl;
-        offset = tmh.offset;
+        memcpy(this, &tmh, sizeof(*this));
         sync();
     }
     return *this;
-}
-
-void
-Ipc::TypedMsgHdr::clear()
-{
-    // may be called from the constructor, with object fields uninitialized
-    memset(static_cast<msghdr*>(this), 0, sizeof(msghdr));
-    memset(&name, 0, sizeof(name));
-    memset(&ios, 0, sizeof(ios));
-    data = DataBuffer();
-    ctrl = CtrlBuffer();
-    offset = 0;
 }
 
 // update msghdr and ios pointers based on msghdr counters
@@ -240,9 +222,7 @@ Ipc::TypedMsgHdr::getFd() const
 void
 Ipc::TypedMsgHdr::prepForReading()
 {
-    clear();
-    // no sync() like other clear() calls because the
-    // alloc*() below "sync()" the parts they allocate.
+    memset(this, 0, sizeof(*this));
     allocName();
     allocData();
     allocControl();

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -83,10 +83,10 @@ xcalloc(size_t n, size_t sz)
     void *p = calloc(n, sz);
     PROF_stop(calloc);
 
-    if (p == NULL) {
+    if (p == nullptr) {
         if (failure_notify) {
             static char msg[128];
-            snprintf(msg, 128, "xcalloc: Unable to allocate %" PRIuSIZE " blocks of %" PRIuSIZE " bytes!\n", n, sz);
+            snprintf(msg, 128, "xcalloc: Unable to allocate %lu blocks of %lu bytes!\n", (unsigned long)n, (unsigned long)sz);
             failure_notify(msg);
         } else {
             perror("xcalloc");
@@ -114,10 +114,10 @@ xmalloc(size_t sz)
     void *p = malloc(sz);
     PROF_stop(malloc);
 
-    if (p == NULL) {
+    if (p == nullptr) {
         if (failure_notify) {
             static char msg[128];
-            snprintf(msg, 128, "xmalloc: Unable to allocate %" PRIuSIZE " bytes!\n", sz);
+            snprintf(msg, 128, "xmalloc: Unable to allocate %lu bytes!\n", (unsigned long)sz);
             failure_notify(msg);
         } else {
             perror("malloc");
@@ -145,10 +145,10 @@ xrealloc(void *s, size_t sz)
     void *p= realloc(s, sz);
     PROF_stop(realloc);
 
-    if (p == NULL) {
+    if (p == nullptr) {
         if (failure_notify) {
             static char msg[128];
-            snprintf(msg, 128, "xrealloc: Unable to reallocate %" PRIuSIZE " bytes!\n", sz);
+            snprintf(msg, 128, "xrealloc: Unable to reallocate %lu bytes!\n", (unsigned long)sz);
             failure_notify(msg);
         } else {
             perror("realloc");

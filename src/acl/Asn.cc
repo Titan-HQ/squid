@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -15,12 +15,11 @@
 #include "acl/DestinationAsn.h"
 #include "acl/DestinationIp.h"
 #include "acl/SourceAsn.h"
-#include "acl/Strategised.h"
+#include "cache_cf.h"
 #include "FwdState.h"
 #include "HttpReply.h"
 #include "HttpRequest.h"
 #include "ipcache.h"
-#include "MasterXaction.h"
 #include "mgr/Registration.h"
 #include "radix.h"
 #include "RequestFlags.h"
@@ -29,9 +28,7 @@
 #include "StoreClient.h"
 
 #define WHOIS_PORT 43
-#ifndef AS_REQBUF_SZ
 #define AS_REQBUF_SZ    4096
-#endif
 
 /* BEGIN of definitions for radix tree entries */
 
@@ -69,32 +66,42 @@ struct as_info {
 
 class ASState
 {
-    CBDATA_CLASS(ASState);
-
 public:
-    ASState() {
-        memset(reqbuf, 0, sizeof(reqbuf));
-    }
-    ~ASState() {
-        if (entry) {
-            debugs(53, 3, entry->url());
-            storeUnregister(sc, entry, this);
-            entry->unlock("~ASState");
-        }
-    }
+    ASState();
+    ~ASState();
 
-public:
-    StoreEntry *entry = nullptr;
-    store_client *sc = nullptr;
+    StoreEntry *entry;
+    store_client *sc;
     HttpRequest::Pointer request;
-    int as_number = 0;
-    int64_t offset = 0;
-    int reqofs = 0;
+    int as_number;
+    int64_t offset;
+    int reqofs;
     char reqbuf[AS_REQBUF_SZ];
-    bool dataRead = false;
+    bool dataRead;
+private:
+    CBDATA_CLASS2(ASState);
 };
 
 CBDATA_CLASS_INIT(ASState);
+
+ASState::ASState() :
+    entry(NULL),
+    sc(NULL),
+    request(NULL),
+    as_number(0),
+    offset(0),
+    reqofs(0),
+    dataRead(false)
+{
+    memset(reqbuf, 0, AS_REQBUF_SZ);
+}
+
+ASState::~ASState()
+{
+    debugs(53, 3, entry->url());
+    storeUnregister(sc, entry, this);
+    entry->unlock("~ASState");
+}
 
 /** entry into the radix tree */
 struct rtentry_t {
@@ -227,27 +234,16 @@ asnStats(StoreEntry * sentry)
 static void
 asnCacheStart(int as)
 {
-    AnyP::Uri whoisUrl(AnyP::PROTO_WHOIS);
-    whoisUrl.host(Config.as_whois_server);
-
-    SBuf asPath("/!gAS");
-    asPath.appendf("%d", as);
-    whoisUrl.path(asPath);
-
-    debugs(53, 3, "AS " << as);
+    LOCAL_ARRAY(char, asres, 4096);
+    StoreEntry *e;
     ASState *asState = new ASState;
+    debugs(53, 3, "AS " << as);
+    snprintf(asres, 4096, "whois://%s/!gAS%d", Config.as_whois_server, as);
     asState->as_number = as;
-    const MasterXaction::Pointer mx = new MasterXaction(XactionInitiator::initAsn);
-    asState->request = new HttpRequest(mx);
-    asState->request->url = whoisUrl;
-    asState->request->method = Http::METHOD_GET;
+    asState->request = HttpRequest::CreateFromUrl(asres);
+    assert(asState->request != NULL);
 
-    // XXX: performance regression, c_str() reallocates
-    const auto asres = xstrdup(whoisUrl.absolute().c_str());
-
-    // XXX: Missing a hittingRequiresCollapsing() && startCollapsingOn() check.
-    auto e = storeGetPublic(asres, Http::METHOD_GET);
-    if (!e) {
+    if ((e = storeGetPublic(asres, Http::METHOD_GET)) == NULL) {
         e = storeCreateEntry(asres, asres, RequestFlags(), Http::METHOD_GET);
         asState->sc = storeClientListAdd(e, asState);
         FwdState::fwdStart(Comm::ConnectionPointer(), e, asState->request.getRaw());
@@ -255,7 +251,6 @@ asnCacheStart(int as)
         e->lock("Asn");
         asState->sc = storeClientListAdd(e, asState);
     }
-    xfree(asres);
 
     asState->entry = e;
     StoreIOBuffer readBuffer (AS_REQBUF_SZ, asState->offset, asState->reqbuf);
@@ -563,7 +558,7 @@ ACLASN::parse()
     char *t = NULL;
 
     for (Tail = curlist; *Tail; Tail = &((*Tail)->next));
-    while ((t = ConfigParser::strtokFile())) {
+    while ((t = strtokFile())) {
         q = new CbDataList<int> (atoi(t));
         *(Tail) = q;
         Tail = &q->next;
@@ -583,20 +578,36 @@ ACLASN::clone() const
 
 template class ACLStrategised<Ip::Address>;
 
+ACL::Prototype ACLASN::SourceRegistryProtoype(&ACLASN::SourceRegistryEntry_, "src_as");
+
+ACLStrategised<Ip::Address> ACLASN::SourceRegistryEntry_(new ACLASN, ACLSourceASNStrategy::Instance(), "src_as");
+
+ACL::Prototype ACLASN::DestinationRegistryProtoype(&ACLASN::DestinationRegistryEntry_, "dst_as");
+
+ACLStrategised<Ip::Address> ACLASN::DestinationRegistryEntry_(new ACLASN, ACLDestinationASNStrategy::Instance(), "dst_as");
+
 int
-ACLSourceASNStrategy::match (ACLData<Ip::Address> * &data, ACLFilledChecklist *checklist)
+ACLSourceASNStrategy::match (ACLData<Ip::Address> * &data, ACLFilledChecklist *checklist, ACLFlags &)
 {
     return data->match(checklist->src_addr);
 }
 
-int
-ACLDestinationASNStrategy::match (ACLData<MatchType> * &data, ACLFilledChecklist *checklist)
+ACLSourceASNStrategy *
+ACLSourceASNStrategy::Instance()
 {
-    const ipcache_addrs *ia = ipcache_gethostbyname(checklist->request->url.host(), IP_LOOKUP_IF_MISS);
+    return &Instance_;
+}
+
+ACLSourceASNStrategy ACLSourceASNStrategy::Instance_;
+
+int
+ACLDestinationASNStrategy::match (ACLData<MatchType> * &data, ACLFilledChecklist *checklist, ACLFlags &)
+{
+    const ipcache_addrs *ia = ipcache_gethostbyname(checklist->request->GetHost(), IP_LOOKUP_IF_MISS);
 
     if (ia) {
-        for (const auto ip: ia->goodAndBad()) {
-            if (data->match(ip))
+        for (int k = 0; k < (int) ia->count; ++k) {
+            if (data->match(ia->in_addrs[k]))
                 return 1;
         }
 
@@ -604,7 +615,7 @@ ACLDestinationASNStrategy::match (ACLData<MatchType> * &data, ACLFilledChecklist
 
     } else if (!checklist->request->flags.destinationIpLookedUp) {
         /* No entry in cache, lookup not attempted */
-        debugs(28, 3, "can't yet compare '" << AclMatchedName << "' ACL for " << checklist->request->url.host());
+        debugs(28, 3, "asnMatchAcl: Can't yet compare '" << AclMatchedName << "' ACL for '" << checklist->request->GetHost() << "'");
         if (checklist->goAsync(DestinationIPLookup::Instance()))
             return -1;
         // else fall through to noaddr match, hiding the lookup failure (XXX)
@@ -613,4 +624,12 @@ ACLDestinationASNStrategy::match (ACLData<MatchType> * &data, ACLFilledChecklist
     noaddr.setNoAddr();
     return data->match(noaddr);
 }
+
+ACLDestinationASNStrategy *
+ACLDestinationASNStrategy::Instance()
+{
+    return &Instance_;
+}
+
+ACLDestinationASNStrategy ACLDestinationASNStrategy::Instance_;
 

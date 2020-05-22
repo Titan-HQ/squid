@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -9,7 +9,6 @@
 /* DEBUG: section 50    Log file handling */
 
 #include "squid.h"
-#include "fatal.h"
 #include "fde.h"
 #include "log/File.h"
 #include "log/ModDaemon.h"
@@ -18,21 +17,7 @@
 #include "log/ModUdp.h"
 #include "log/TcpLogger.h"
 
-CBDATA_CLASS_INIT(Logfile);
-
-Logfile::Logfile(const char *aPath) :
-    sequence_number(0),
-    data(NULL),
-    f_linestart(NULL),
-    f_linewrite(NULL),
-    f_lineend(NULL),
-    f_flush(NULL),
-    f_rotate(NULL),
-    f_close(NULL)
-{
-    xstrncpy(path, aPath, sizeof(path));
-    flags.fatal = 0;
-}
+CBDATA_TYPE(Logfile);
 
 Logfile *
 logfileOpen(const char *path, size_t bufsz, int fatal_flag)
@@ -41,8 +26,10 @@ logfileOpen(const char *path, size_t bufsz, int fatal_flag)
     const char *patharg;
 
     debugs(50, DBG_IMPORTANT, "Logfile: opening log " << path);
+    CBDATA_INIT_TYPE(Logfile);
 
-    Logfile *lf = new Logfile(path);
+    Logfile *lf = cbdataAlloc(Logfile);
+    xstrncpy(lf->path, path, MAXPATHLEN);
     patharg = path;
     /* need to call the per-logfile-type code */
     if (strncmp(path, "stdio:", 6) == 0) {
@@ -73,7 +60,7 @@ logfileOpen(const char *path, size_t bufsz, int fatal_flag)
         else
             debugs(50, DBG_IMPORTANT, "logfileOpen: " << path << ": couldn't open!");
         lf->f_close(lf);
-        delete lf;
+        cbdataFree(lf);
         return NULL;
     }
     assert(lf->data != NULL);
@@ -92,14 +79,14 @@ logfileClose(Logfile * lf)
     debugs(50, DBG_IMPORTANT, "Logfile: closing log " << lf->path);
     lf->f_flush(lf);
     lf->f_close(lf);
-    delete lf;
+    cbdataFree(lf);
 }
 
 void
-logfileRotate(Logfile * lf, int16_t rotateCount)
+logfileRotate(Logfile * lf)
 {
     debugs(50, DBG_IMPORTANT, "logfileRotate: " << lf->path);
-    lf->f_rotate(lf, rotateCount);
+    lf->f_rotate(lf);
 }
 
 void

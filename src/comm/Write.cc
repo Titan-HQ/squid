@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -7,10 +7,8 @@
  */
 
 #include "squid.h"
-#include "cbdata.h"
 #include "comm/Connection.h"
 #include "comm/IoCallback.h"
-#include "comm/Loops.h"
 #include "comm/Write.h"
 #include "fd.h"
 #include "fde.h"
@@ -25,6 +23,8 @@
 
 #include <cerrno>
 
+extern bool isOpen(const int fd);
+
 void
 Comm::Write(const Comm::ConnectionPointer &conn, MemBuf *mb, AsyncCall::Pointer &callback)
 {
@@ -34,13 +34,27 @@ Comm::Write(const Comm::ConnectionPointer &conn, MemBuf *mb, AsyncCall::Pointer 
 void
 Comm::Write(const Comm::ConnectionPointer &conn, const char *buf, int size, AsyncCall::Pointer &callback, FREE * free_func)
 {
+
+   if (!isOpen(conn->fd)){
+      debugs(5, 4, HERE<<" fails: FD " << conn->fd << " closed");
+      return;
+   };
+
     debugs(5, 5, HERE << conn << ": sz " << size << ": asynCall " << callback);
 
     /* Make sure we are open, not closing, and not writing */
     assert(fd_table[conn->fd].flags.open);
     assert(!fd_table[conn->fd].closing());
     Comm::IoCallback *ccb = COMMIO_FD_WRITECB(conn->fd);
-    assert(!ccb->active());
+
+
+    if (ccb->callback!=NULL && ccb->callback!=callback){
+       ccb->callback->cancel("Comm::Write reset");
+       ccb->callback = NULL;
+    }
+
+
+    if (ccb->buf && ccb->buf!=buf) ccb->reset();
 
     fd_table[conn->fd].writeStart = squid_curtime;
     ccb->conn = conn;
@@ -57,12 +71,26 @@ Comm::Write(const Comm::ConnectionPointer &conn, const char *buf, int size, Asyn
 void
 Comm::HandleWrite(int fd, void *data)
 {
+
+   if (!isOpen(fd)){
+      debugs(5, 4, HERE<<" fails: FD " << fd << " closed");
+      return;
+   };
+   if (!data){
+      debugs(5, 4, HERE<<" fails: IoCallback is empty");
+      return;
+   };
+
+   if (!fd_table[fd].write_method){
+      debugs(5, 4, HERE<<" fails: write_method is empty");
+      return;
+   }
+
     Comm::IoCallback *state = static_cast<Comm::IoCallback *>(data);
     int len = 0;
     int nleft;
 
-    assert(state->conn != NULL);
-    assert(state->conn->fd == fd);
+    assert(state->conn != NULL && state->conn->fd == fd);
 
     PROF_start(commHandleWrite);
     debugs(5, 5, HERE << state->conn << ": off " <<
@@ -71,13 +99,35 @@ Comm::HandleWrite(int fd, void *data)
     nleft = state->size - state->offset;
 
 #if USE_DELAY_POOLS
-    BandwidthBucket *bucket = BandwidthBucket::SelectBucket(&fd_table[fd]);
-    if (bucket) {
-        assert(bucket->selectWaiting);
-        bucket->selectWaiting = false;
-        if (nleft > 0 && !bucket->applyQuota(nleft, state)) {
-            PROF_stop(commHandleWrite);
-            return;
+    ClientInfo * clientInfo=fd_table[fd].clientInfo;
+
+    if (clientInfo && !clientInfo->writeLimitingActive)
+        clientInfo = NULL; // we only care about quota limits here
+
+    if (clientInfo) {
+        assert(clientInfo->selectWaiting);
+        clientInfo->selectWaiting = false;
+
+        assert(clientInfo->hasQueue());
+        assert(clientInfo->quotaPeekFd() == fd);
+        clientInfo->quotaDequeue(); // we will write or requeue below
+
+        if (nleft > 0) {
+            const int quota = clientInfo->quotaForDequed();
+            if (!quota) {  // if no write quota left, queue this fd
+                state->quotaQueueReserv = clientInfo->quotaEnqueue(fd);
+                clientInfo->kickQuotaQueue();
+                PROF_stop(commHandleWrite);
+                return;
+            }
+
+            const int nleft_corrected = min(nleft, quota);
+            if (nleft != nleft_corrected) {
+                debugs(5, 5, HERE << state->conn << " writes only " <<
+                       nleft_corrected << " out of " << nleft);
+                nleft = nleft_corrected;
+            }
+
         }
     }
 #endif /* USE_DELAY_POOLS */
@@ -89,9 +139,18 @@ Comm::HandleWrite(int fd, void *data)
     debugs(5, 5, HERE << "write() returns " << len);
 
 #if USE_DELAY_POOLS
-    if (bucket) {
-        /* we wrote data - drain them from bucket */
-        bucket->reduceBucket(len);
+    if (clientInfo) {
+        if (len > 0) {
+            /* we wrote data - drain them from bucket */
+            clientInfo->bucketSize -= len;
+            if (clientInfo->bucketSize < 0.0) {
+                debugs(5, DBG_IMPORTANT, HERE << "drained too much"); // should not happen
+                clientInfo->bucketSize = 0;
+            }
+        }
+
+        // even if we wrote nothing, we were served; give others a chance
+        clientInfo->kickQuotaQueue();
     }
 #endif /* USE_DELAY_POOLS */
 

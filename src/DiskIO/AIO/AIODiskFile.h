@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -9,10 +9,10 @@
 #ifndef SQUID_AIODISKFILE_H
 #define SQUID_AIODISKFILE_H
 
-#if HAVE_DISKIO_MODULE_AIO
+#if USE_DISKIO_AIO
 
+#include "async_io.h"
 #include "cbdata.h"
-#include "DiskIO/AIO/async_io.h"
 #include "DiskIO/DiskFile.h"
 #include "SquidString.h"
 
@@ -20,7 +20,6 @@ class AIODiskIOStrategy;
 
 class AIODiskFile : public DiskFile
 {
-    CBDATA_CLASS(AIODiskFile);
 
 public:
 
@@ -54,8 +53,9 @@ private:
     RefCount<IORequestor> ioRequestor;
     bool closed;
     bool error_;
+    CBDATA_CLASS2(AIODiskFile);
 };
 
-#endif /* HAVE_DISKIO_MODULE_AIO */
+#endif /* USE_DISKIO_AIO */
 #endif /* SQUID_AIODISKFILE_H */
 

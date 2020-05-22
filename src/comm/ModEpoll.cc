@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -49,7 +49,7 @@
 #include <sys/epoll.h>
 #endif
 
-static int kdpfd = -1;
+static int kdpfd;
 static int max_poll_time = 1000;
 
 static struct epoll_event *pevents;
@@ -69,15 +69,13 @@ Comm::SelectLoopInit(void)
     pevents = (struct epoll_event *) xmalloc(SQUID_MAXFD * sizeof(struct epoll_event));
 
     if (!pevents) {
-        int xerrno = errno;
-        fatalf("comm_select_init: xmalloc() failed: %s\n", xstrerr(xerrno));
+        fatalf("comm_select_init: xmalloc() failed: %s\n",xstrerror());
     }
 
     kdpfd = epoll_create(SQUID_MAXFD);
 
     if (kdpfd < 0) {
-        int xerrno = errno;
-        fatalf("comm_select_init: epoll_create(): %s\n", xstrerr(xerrno));
+        fatalf("comm_select_init: epoll_create(): %s\n",xstrerror());
     }
 
     commEPollRegisterWithCacheManager();
@@ -111,13 +109,17 @@ Comm::SetSelect(int fd, unsigned int type, PF * handler, void *client_data, time
     fde *F = &fd_table[fd];
     int epoll_ctl_type = 0;
 
+    struct epoll_event ev;
     assert(fd >= 0);
     debugs(5, 5, HERE << "FD " << fd << ", type=" << type <<
            ", handler=" << handler << ", client_data=" << client_data <<
            ", timeout=" << timeout);
 
-    struct epoll_event ev;
-    memset(&ev, 0, sizeof(ev));
+    if (RUNNING_ON_VALGRIND) {
+        /* Keep valgrind happy.. complains about uninitialized bytes otherwise */
+        memset(&ev, 0, sizeof(ev));
+    }
+    ev.events = 0;
     ev.data.fd = fd;
 
     if (!F->flags.open) {
@@ -170,14 +172,21 @@ Comm::SetSelect(int fd, unsigned int type, PF * handler, void *client_data, time
         F->epoll_state = ev.events;
 
         if (epoll_ctl(kdpfd, epoll_ctl_type, fd, &ev) < 0) {
-            int xerrno = errno;
-            debugs(5, DEBUG_EPOLL ? 0 : 8, "epoll_ctl(," << epolltype_atoi(epoll_ctl_type) <<
-                   ",,): failed on FD " << fd << ": " << xstrerr(xerrno));
+            debugs(5, DEBUG_EPOLL ? 0 : 8, HERE << "epoll_ctl(," << epolltype_atoi(epoll_ctl_type) <<
+                   ",,): failed on FD " << fd << ": " << xstrerror());
         }
     }
 
     if (timeout)
         F->timeout = squid_curtime + timeout;
+}
+
+void
+Comm::ResetSelect(int fd)
+{
+    fde *F = &fd_table[fd];
+    F->epoll_state = 0;
+    SetSelect(fd, 0, NULL, NULL, 0);
 }
 
 static void commIncomingStats(StoreEntry * sentry);

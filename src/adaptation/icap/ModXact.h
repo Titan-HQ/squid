@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -14,7 +14,6 @@
 #include "adaptation/icap/Launcher.h"
 #include "adaptation/icap/Xaction.h"
 #include "BodyPipe.h"
-#include "http/one/forward.h"
 
 /*
  * ICAPModXact implements ICAP REQMOD and RESPMOD transaction using
@@ -25,6 +24,8 @@
  * interface. The initiator (or its associate) is expected to send and/or
  * receive the HTTP body.
  */
+
+class ChunkedCodingParser;
 
 namespace Adaptation
 {
@@ -63,7 +64,7 @@ public:
     VirginBodyAct();
 
     void plan(); // the activity may happen; do not consume at or above offset
-    void disable(); // the activity will not continue; no consumption restrictions
+    void disable(); // the activity wont continue; no consumption restrictions
 
     bool active() const { return theState == stActive; }
     bool disabled() const { return theState == stDisabled; }
@@ -105,27 +106,11 @@ private:
     enum State { stDisabled, stWriting, stIeof, stDone } theState;
 };
 
-/// Parses and stores ICAP trailer header block.
-class TrailerParser
-{
-public:
-    TrailerParser() : trailer(hoReply), hdr_sz(0) {}
-    /// Parses trailers stored in a buffer.
-    /// \returns true and sets hdr_sz on success
-    /// \returns false and sets *error to zero when needs more data
-    /// \returns false and sets *error to a positive Http::StatusCode on error
-    bool parse(const char *buf, int len, int atEnd, Http::StatusCode *error);
-    HttpHeader trailer;
-    /// parsed trailer size if parse() was successful
-    size_t hdr_sz; // pedantic XXX: wrong type dictated by HttpHeader::parse() API
-};
-
 class ModXact: public Xaction, public BodyProducer, public BodyConsumer
 {
-    CBDATA_CLASS(ModXact);
 
 public:
-    ModXact(Http::Message *virginHeader, HttpRequest *virginCause, AccessLogEntry::Pointer &alp, ServiceRep::Pointer &s);
+    ModXact(HttpMsg *virginHeader, HttpRequest *virginCause, AccessLogEntry::Pointer &alp, ServiceRep::Pointer &s);
     virtual ~ModXact();
 
     // BodyProducer methods
@@ -159,9 +144,9 @@ public:
     virtual void detailError(int errDetail);
     // Icap::Xaction API
     virtual void clearError();
-    /// The master transaction log entry
-    virtual AccessLogEntry::Pointer masterLogEntry() { return alMaster; }
 
+    //titan lib/ttnPE
+   std::string status_msg{};
 private:
     virtual void start();
 
@@ -217,11 +202,10 @@ private:
     void parseHeaders();
     void parseIcapHead();
     void parseHttpHead();
-    bool parseHead(Http::Message *head);
+    bool parseHead(HttpMsg *head);
 
     void decideOnParsingBody();
     void parseBody();
-    void parseIcapTrailer();
     void maybeAllocateHttpMsg();
 
     void handle100Continue();
@@ -239,7 +223,6 @@ private:
     void prepEchoing();
     void prepPartialBodyEchoing(uint64_t pos);
     void echoMore();
-    void updateSources(); ///< Update the Http::Message sources
 
     virtual bool doneAll() const;
     virtual void swanSong();
@@ -247,7 +230,7 @@ private:
     void stopReceiving();
     void stopSending(bool nicely);
     void stopWriting(bool nicely);
-    void stopParsing(const bool checkUnparsedData = true);
+    void stopParsing();
     void stopBackup();
 
     virtual void fillPendingStatus(MemBuf &buf) const;
@@ -255,22 +238,9 @@ private:
     virtual bool fillVirginHttpHeader(MemBuf&) const;
 
 private:
-    /// parses a message header or trailer
-    /// \returns true on success
-    /// \returns false if more data is needed
-    /// \throw TextException on unrecoverable error
-    template<class Part>
-    bool parsePart(Part *part, const char *description);
-
-    void packHead(MemBuf &httpBuf, const Http::Message *head);
-    void encapsulateHead(MemBuf &icapBuf, const char *section, MemBuf &httpBuf, const Http::Message *head);
+    void packHead(MemBuf &httpBuf, const HttpMsg *head);
+    void encapsulateHead(MemBuf &icapBuf, const char *section, MemBuf &httpBuf, const HttpMsg *head);
     bool gotEncapsulated(const char *section) const;
-    /// whether ICAP response header indicates HTTP header presence
-    bool expectHttpHeader() const;
-    /// whether ICAP response header indicates HTTP body presence
-    bool expectHttpBody() const;
-    /// whether ICAP response header indicates ICAP trailers presence
-    bool expectIcapTrailers() const;
     void checkConsuming();
 
     virtual void finalizeLogInfo();
@@ -281,7 +251,7 @@ private:
     uint64_t virginConsumed;        // virgin data consumed so far
     Preview preview; // use for creating (writing) the preview
 
-    Http1::TeChunkedParser *bodyParser; // ICAP response body parser
+    ChunkedCodingParser *bodyParser; // ICAP response body parser
 
     bool canStartBypass; // enables bypass of transaction failures
     bool protectGroupBypass; // protects ServiceGroup-wide bypass of failures
@@ -299,7 +269,6 @@ private:
 
     int adaptHistoryId; ///< adaptation history slot reservation
 
-    TrailerParser *trailerParser;
 
     class State
     {
@@ -335,7 +304,7 @@ private:
                    parsing == psHttpHeader;
         }
 
-        enum Parsing { psIcapHeader, psHttpHeader, psBody, psIcapTrailer, psDone } parsing;
+        enum Parsing { psIcapHeader, psHttpHeader, psBody, psDone } parsing;
 
         // measures ICAP request writing progress
         enum Writing { writingInit, writingConnect, writingHeaders,
@@ -350,16 +319,15 @@ private:
     } state;
 
     AccessLogEntry::Pointer alMaster; ///< Master transaction AccessLogEntry
+    CBDATA_CLASS2(ModXact);
 };
 
 // An Launcher that stores ModXact construction info and
 // creates ModXact when needed
 class ModXactLauncher: public Launcher
 {
-    CBDATA_CLASS(ModXactLauncher);
-
 public:
-    ModXactLauncher(Http::Message *virginHeader, HttpRequest *virginCause, AccessLogEntry::Pointer &alp, Adaptation::ServicePointer s);
+    ModXactLauncher(HttpMsg *virginHeader, HttpRequest *virginCause, AccessLogEntry::Pointer &alp, Adaptation::ServicePointer s);
 
 protected:
     virtual Xaction *createXaction();
@@ -372,6 +340,9 @@ protected:
     InOut virgin;
 
     AccessLogEntry::Pointer al;
+
+private:
+    CBDATA_CLASS2(ModXactLauncher);
 };
 
 } // namespace Icap

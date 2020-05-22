@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -10,7 +10,6 @@
 #define SQUID_SRC_TEST_STORE_H
 
 #include "Store.h"
-#include "store/Controlled.h"
 
 #include <cppunit/extensions/HelperMacros.h>
 
@@ -36,8 +35,11 @@ protected:
     void testMaxSize();
 };
 
-/// allows testing of methods without having all the other components live
-class TestStore : public Store::Controller
+/* subclass of Store to allow testing of methods without having all the
+ * other components live
+ */
+
+class TestStore : public Store
 {
 
 public:
@@ -71,9 +73,11 @@ public:
 
     virtual void reference(StoreEntry &) {} /* Reference this object */
 
-    virtual bool dereference(StoreEntry &) { return true; }
+    virtual bool dereference(StoreEntry &, bool) { return true; }
 
-    virtual StoreSearch *search();
+    virtual StoreSearch *search(String const url, HttpRequest *);
+    
+    virtual bool smpAware() const { return false; }
 };
 
 typedef RefCount<TestStore> TestStorePointer;

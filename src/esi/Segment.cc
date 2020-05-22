@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -13,8 +13,9 @@
 #include "esi/Segment.h"
 #include "SquidString.h"
 
-CBDATA_CLASS_INIT(ESISegment);
+CBDATA_TYPE(ESISegment);
 
+/* ESISegment */
 void
 ESISegmentFreeList (ESISegment::Pointer &head)
 {
@@ -125,6 +126,22 @@ ESISegment::ListAppend (ESISegment::Pointer &head, char const *s, size_t len)
     head->tail()->listAppend (s, len);
 }
 
+void *
+ESISegment::operator new(size_t byteCount)
+{
+    assert (byteCount == sizeof (ESISegment));
+    void *rv;
+    CBDATA_INIT_TYPE(ESISegment);
+    rv = (void *)cbdataAlloc (ESISegment);
+    return rv;
+}
+
+void
+ESISegment::operator delete (void *address)
+{
+    cbdataFree (address);
+}
+
 /* XXX: if needed, make this iterative */
 ESISegment::Pointer
 ESISegment::cloneList () const
@@ -170,6 +187,9 @@ ESISegment::tail()
 
     return result.getRaw();
 }
+
+ESISegment::ESISegment() : len(0), next(NULL)
+{}
 
 ESISegment::ESISegment(ESISegment const &old) : len (0), next(NULL)
 {

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -10,6 +10,7 @@
 #define HTTPBODY_H_
 
 #include "MemBuf.h"
+class Packer;
 
 /** Representation of a short predetermined message
  *
@@ -27,12 +28,11 @@ public:
      * by the HttpBody.
      */
     void setMb(MemBuf *);
-
-    /** output the HttpBody contents into the supplied container
+    /** output the HttpBody contents into the supplied packer
      *
      * \note content is not cleared by the output operation
      */
-    void packInto(Packable *) const;
+    void packInto(Packer *) const;
 
     /// clear the HttpBody content
     void clear();

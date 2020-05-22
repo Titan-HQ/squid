@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -168,7 +168,7 @@ Comm::SetSelect(int fd, unsigned int type, PF * handler, void *client_data, time
 {
     fde *F = &fd_table[fd];
     assert(fd >= 0);
-    assert(F->flags.open || (!handler && !client_data && !timeout));
+    assert(F->flags.open);
     debugs(5, 5, HERE << "FD " << fd << ", type=" << type <<
            ", handler=" << handler << ", client_data=" << client_data <<
            ", timeout=" << timeout);
@@ -193,6 +193,38 @@ Comm::SetSelect(int fd, unsigned int type, PF * handler, void *client_data, time
         F->timeout = squid_curtime + timeout;
 
 }
+
+void
+Comm::ResetSelect(int fd)
+{
+    fde *F = &fd_table[fd];
+    if (F->read_handler) {
+        kq_update_events(fd, EVFILT_READ, (PF *)1);
+    }
+    if (F->write_handler) {
+        kq_update_events(fd, EVFILT_WRITE, (PF *)1);
+    }
+}
+
+void
+Comm::ResetSelectEX(const int fd,void * const _data){
+   if (-1!=fd && fd_table){
+         fde *const F = &fd_table[fd];
+         if (F->read_handler && F->read_data==_data) {
+            kq_update_events(fd, EVFILT_READ, (PF *)1);
+            F->read_data=NULL;
+         }
+         if (F->write_handler && F->write_data==_data) {
+           kq_update_events(fd, EVFILT_WRITE, (PF *)1);
+           F->write_data=NULL;
+         };
+         return;
+   }//else
+    //assert(0 && "Comm::ResetSelectEX" );
+}
+
+
+
 
 /*
  * Check all connections for new connections and input data that is to be

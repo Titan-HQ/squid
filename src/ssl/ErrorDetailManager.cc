@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -10,7 +10,6 @@
 #include "ErrorDetail.h"
 #include "ErrorDetailManager.h"
 #include "errorpage.h"
-#include "http/ContentLengthInterpreter.h"
 #include "mime_header.h"
 
 void Ssl::errorDetailInitialize()
@@ -44,7 +43,7 @@ private:
 
 /******************/
 bool
-Ssl::ErrorDetailsList::getRecord(Security::ErrorCode value, ErrorDetailEntry &entry)
+Ssl::ErrorDetailsList::getRecord(Ssl::ssl_error_t value, ErrorDetailEntry &entry)
 {
     const ErrorDetails::const_iterator it = theList.find(value);
     if (it != theList.end()) {
@@ -58,7 +57,7 @@ Ssl::ErrorDetailsList::getRecord(Security::ErrorCode value, ErrorDetailEntry &en
 }
 
 const char *
-Ssl::ErrorDetailsList::getErrorDescr(Security::ErrorCode value)
+Ssl::ErrorDetailsList::getErrorDescr(Ssl::ssl_error_t value)
 {
     const ErrorDetails::const_iterator it = theList.find(value);
     if (it != theList.end()) {
@@ -69,7 +68,7 @@ Ssl::ErrorDetailsList::getErrorDescr(Security::ErrorCode value)
 }
 
 const char *
-Ssl::ErrorDetailsList::getErrorDetail(Security::ErrorCode value)
+Ssl::ErrorDetailsList::getErrorDetail(Ssl::ssl_error_t value)
 {
     const ErrorDetails::const_iterator it = theList.find(value);
     if (it != theList.end()) {
@@ -124,11 +123,11 @@ void Ssl::ErrorDetailsManager::cacheDetails(ErrorDetailsList::Pointer &errorDeta
 }
 
 bool
-Ssl::ErrorDetailsManager::getErrorDetail(Security::ErrorCode value, const HttpRequest::Pointer &request, ErrorDetailEntry &entry)
+Ssl::ErrorDetailsManager::getErrorDetail(Ssl::ssl_error_t value, const HttpRequest::Pointer &request, ErrorDetailEntry &entry)
 {
 #if USE_ERR_LOCALES
     String hdr;
-    if (request != NULL && request->header.getList(Http::HdrType::ACCEPT_LANGUAGE, &hdr)) {
+    if (request != NULL && request->header.getList(HDR_ACCEPT_LANGUAGE, &hdr)) {
         ErrorDetailsList::Pointer errDetails = NULL;
         //Try to retrieve from cache
         size_t pos = 0;
@@ -165,13 +164,13 @@ Ssl::ErrorDetailsManager::getErrorDetail(Security::ErrorCode value, const HttpRe
 }
 
 const char *
-Ssl::ErrorDetailsManager::getDefaultErrorDescr(Security::ErrorCode value)
+Ssl::ErrorDetailsManager::getDefaultErrorDescr(Ssl::ssl_error_t value)
 {
     return theDefaultErrorDetails->getErrorDescr(value);
 }
 
 const char *
-Ssl::ErrorDetailsManager::getDefaultErrorDetail(Security::ErrorCode value)
+Ssl::ErrorDetailsManager::getDefaultErrorDetail(Ssl::ssl_error_t value)
 {
     return theDefaultErrorDetails->getErrorDetail(value);
 }
@@ -213,9 +212,7 @@ Ssl::ErrorDetailFile::parse(const char *buffer, int len, bool eof)
 
         if ( s != e) {
             DetailEntryParser parser;
-            Http::ContentLengthInterpreter interpreter;
-            // no applyStatusCodeRules() -- error templates lack HTTP status code
-            if (!parser.parse(s, e - s, interpreter)) {
+            if (!parser.parse(s, e)) {
                 debugs(83, DBG_IMPORTANT, HERE <<
                        "WARNING! parse error on:" << s);
                 return false;
@@ -228,7 +225,7 @@ Ssl::ErrorDetailFile::parse(const char *buffer, int len, bool eof)
                 return false;
             }
 
-            Security::ErrorCode ssl_error = Ssl::GetErrorCode(errorName.termedBuf());
+            Ssl::ssl_error_t ssl_error = Ssl::GetErrorCode(errorName.termedBuf());
             if (ssl_error != SSL_ERROR_NONE) {
 
                 if (theDetails->getErrorDetail(ssl_error)) {

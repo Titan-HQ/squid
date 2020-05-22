@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -18,7 +18,6 @@
 #include "base/TextException.h"
 #include "HttpReply.h"
 #include "HttpRequest.h"
-#include "MasterXaction.h"
 
 const libecap::Name Adaptation::Ecap::protocolInternal("internal", libecap::Name::NextId());
 const libecap::Name Adaptation::Ecap::protocolCacheObj("cache_object", libecap::Name::NextId());
@@ -39,12 +38,12 @@ Adaptation::Ecap::Host::Host()
     // assign our host-specific IDs to well-known names
     // this code can run only once
 
-    libecap::headerTransferEncoding.assignHostId(Http::HdrType::TRANSFER_ENCODING);
-    libecap::headerReferer.assignHostId(Http::HdrType::REFERER);
-    libecap::headerContentLength.assignHostId(Http::HdrType::CONTENT_LENGTH);
-    libecap::headerVia.assignHostId(Http::HdrType::VIA);
-    // TODO: libecap::headerXClientIp.assignHostId(Http::HdrType::X_CLIENT_IP);
-    // TODO: libecap::headerXServerIp.assignHostId(Http::HdrType::X_SERVER_IP);
+    libecap::headerTransferEncoding.assignHostId(HDR_TRANSFER_ENCODING);
+    libecap::headerReferer.assignHostId(HDR_REFERER);
+    libecap::headerContentLength.assignHostId(HDR_CONTENT_LENGTH);
+    libecap::headerVia.assignHostId(HDR_VIA);
+    // TODO: libecap::headerXClientIp.assignHostId(HDR_X_CLIENT_IP);
+    // TODO: libecap::headerXServerIp.assignHostId(HDR_X_SERVER_IP);
 
     libecap::protocolHttp.assignHostId(AnyP::PROTO_HTTP);
     libecap::protocolHttps.assignHostId(AnyP::PROTO_HTTPS);
@@ -138,7 +137,7 @@ SquidLogLevel(libecap::LogVerbosity lv)
         return DBG_DATA; // is it a good idea to ignore other flags?
 
     if (lv.application())
-        return lv.normal() ? DBG_IMPORTANT : 2;
+        return DBG_IMPORTANT; // is it a good idea to ignore other flags?
 
     return 2 + 2*lv.debugging() + 3*lv.operation() + 2*lv.xaction();
 }
@@ -150,7 +149,7 @@ Adaptation::Ecap::Host::openDebug(libecap::LogVerbosity lv)
     const int squidSection = 93; // XXX: this should be a global constant
     return Debug::Enabled(squidSection, squidLevel) ?
            &Debug::Start(squidSection, squidLevel) :
-           nullptr;
+           NULL;
 }
 
 void
@@ -163,8 +162,7 @@ Adaptation::Ecap::Host::closeDebug(std::ostream *debug)
 Adaptation::Ecap::Host::MessagePtr
 Adaptation::Ecap::Host::newRequest() const
 {
-    static const MasterXaction::Pointer mx = new MasterXaction(XactionInitiator::initAdaptationOrphan_);
-    return MessagePtr(new Adaptation::Ecap::MessageRep(new HttpRequest(mx)));
+    return MessagePtr(new Adaptation::Ecap::MessageRep(new HttpRequest));
 }
 
 Adaptation::Ecap::Host::MessagePtr

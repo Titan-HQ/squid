@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -108,19 +108,6 @@ testPreCompiler::testIfDefAnd()
 #endif
     CPPUNIT_ASSERT(undefinedAndFalseB);
     CPPUNIT_ASSERT(!undefinedAndTrueB);
-
-#if UNDEFINED_FOO && UNDEFINED_FOO
-    bool undefinedAndUndefinedC = true;
-#else
-    bool undefinedAndUndefinedC = false;
-#endif
-#if !UNDEFINED_FOO && !UNDEFINED_FOO
-    bool notUndefinedAndNotUndefinedC = true;
-#else
-    bool notUndefinedAndNotUndefinedC = false;
-#endif
-    CPPUNIT_ASSERT(!undefinedAndUndefinedC);
-    CPPUNIT_ASSERT(notUndefinedAndNotUndefinedC);
 }
 
 /**
@@ -162,17 +149,5 @@ testPreCompiler::testIfDefOr()
     CPPUNIT_ASSERT(undefinedOrFalseB);
     CPPUNIT_ASSERT(!undefinedOrTrueB);
 
-#if UNDEFINED_FOO || UNDEFINED_FOO
-    bool undefinedOrUndefinedC = true;
-#else
-    bool undefinedOrUndefinedC = false;
-#endif
-#if !UNDEFINED_FOO || !UNDEFINED_FOO
-    bool notUndefinedOrNotUndefinedC = true;
-#else
-    bool notUndefinedOrNotUndefinedC = false;
-#endif
-    CPPUNIT_ASSERT(notUndefinedOrNotUndefinedC);
-    CPPUNIT_ASSERT(!undefinedOrUndefinedC);
 }
 

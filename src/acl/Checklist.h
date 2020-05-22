@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -9,11 +9,10 @@
 #ifndef SQUID_ACLCHECKLIST_H
 #define SQUID_ACLCHECKLIST_H
 
+#include "TAPE.hxx"
 #include "acl/InnerNode.h"
 #include <stack>
 #include <vector>
-
-class HttpRequest;
 
 /// ACL checklist callback
 typedef void ACLCB(allow_t, void *);
@@ -23,7 +22,7 @@ typedef void ACLCB(allow_t, void *);
     Provides basic ACL checking methods. Its only child, ACLFilledChecklist,
     keeps the actual state data. The split is necessary to avoid exposing
     all ACL-related code to virtually Squid data types. */
-class ACLChecklist
+class ACLChecklist:public titan_v3::IACLChecklist
 {
 
 public:
@@ -153,34 +152,55 @@ public:
     /// prints a debugging message explaining the reason for that answer
     void markFinished(const allow_t &newAnswer, const char *reason);
 
-    const allow_t &currentAnswer() const { return allow_; }
+    void markFinished(const titan_v3::request_state _state, const char *const _reason){
 
+       allow_t _answer=ACCESS_ALLOWED;
+
+       switch (_state){
+
+          case titan_v3::request_state::dunno:_answer=ACCESS_DUNNO;break;
+          case titan_v3::request_state::deny:_answer=ACCESS_DENIED;break;
+          case titan_v3::request_state::auth_req:_answer=ACCESS_AUTH_REQUIRED;break;
+          case titan_v3::request_state::allow:
+          default:break;
+
+       }
+
+       return this->markFinished(_answer,_reason);
+
+    }
+
+    bool Update(const allow_t &newAnswer, const char *reason);
+
+    bool Update(const titan_v3::request_state _state, const char *const _reason){
+
+       allow_t _answer=ACCESS_ALLOWED;
+
+       switch (_state){
+
+          case titan_v3::request_state::dunno:_answer=ACCESS_DUNNO;break;
+          case titan_v3::request_state::deny:_answer=ACCESS_DENIED;break;
+          case titan_v3::request_state::auth_req:_answer=ACCESS_AUTH_REQUIRED;break;
+          case titan_v3::request_state::allow:
+          default:break;
+
+       }
+
+       return this->Update(_answer,_reason);
+
+    }
+
+    const allow_t &currentAnswer() const { return allow_; }
+    const allow_t &lastAnswer();
     /// whether the action is banned or not
     bool bannedAction(const allow_t &action) const;
     /// add action to the list of banned actions
     void banAction(const allow_t &action);
-
     // XXX: ACLs that need request or reply have to use ACLFilledChecklist and
     // should do their own checks so that we do not have to povide these two
     // for ACL::checklistMatches to use
     virtual bool hasRequest() const = 0;
     virtual bool hasReply() const = 0;
-    virtual bool hasAle() const = 0;
-    /// assigns uninitialized adapted_request and url ALE components
-    virtual void syncAle(HttpRequest *adaptedRequest, const char *logUri) const = 0;
-    /// warns if there are uninitialized ALE components and fills them
-    virtual void verifyAle() const = 0;
-
-    /// change the current ACL list
-    /// \return a pointer to the old list value (may be nullptr)
-    const Acl::Tree *changeAcl(const Acl::Tree *t) {
-        const Acl::Tree *old = accessList;
-        if (t != accessList) {
-            cbdataReferenceDone(accessList);
-            accessList = cbdataReference(t);
-        }
-        return old;
-    }
 
 private:
     /// Calls non-blocking check callback with the answer and destroys self.
@@ -191,12 +211,12 @@ private:
     void changeState(AsyncState *);
     AsyncState *asyncState() const;
 
-    const Acl::Tree *accessList;
 public:
+    const Acl::Tree *accessList;
 
     ACLCB *callback;
     void *callback_data;
-
+    uint64_t _id;
     /// Resumes non-blocking check started by nonBlockingCheck() and
     /// suspended until some async operation updated Squid state.
     void resumeNonBlockingCheck(AsyncState *state);
@@ -229,6 +249,7 @@ private: /* internal methods */
     bool occupied_; ///< whether a check (fast or non-blocking) is in progress
     bool finished_;
     allow_t allow_;
+    allow_t last_;
 
     enum AsyncStage { asyncNone, asyncStarting, asyncRunning, asyncFailed };
     AsyncStage asyncStage_;

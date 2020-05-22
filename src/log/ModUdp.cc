@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -11,9 +11,8 @@
 #include "squid.h"
 #include "comm.h"
 #include "comm/Connection.h"
-#include "fatal.h"
+#include "disk.h"
 #include "fd.h"
-#include "fs_io.h"
 #include "log/File.h"
 #include "log/ModUdp.h"
 #include "Parsing.h"
@@ -45,8 +44,7 @@ logfile_mod_udp_write(Logfile * lf, const char *buf, size_t len)
     fd_bytes(ll->fd, s, FD_WRITE);
 #if 0
     if (s < 0) {
-        int xerrno = errno;
-        debugs(1, DBG_IMPORTANT, "logfile (udp): got errno (" << errno << "):" << xstrerr(xerrno));
+        debugs(1, DBG_IMPORTANT, "logfile (udp): got errno (" << errno << "):" << xstrerror());
     }
     if (s != len) {
         debugs(1, DBG_IMPORTANT, "logfile (udp): len=" << len << ", wrote=" << s);
@@ -95,18 +93,19 @@ logfile_mod_udp_writeline(Logfile * lf, const char *buf, size_t len)
 }
 
 static void
-logfile_mod_udp_linestart(Logfile *)
+logfile_mod_udp_linestart(Logfile * lf)
 {
 }
 
 static void
-logfile_mod_udp_lineend(Logfile *)
+logfile_mod_udp_lineend(Logfile * lf)
 {
 }
 
 static void
-logfile_mod_udp_rotate(Logfile *, const int16_t)
+logfile_mod_udp_rotate(Logfile * lf)
 {
+    return;
 }
 
 static void
@@ -167,7 +166,6 @@ logfile_mod_udp_open(Logfile * lf, const char *path, size_t bufsz, int fatal_fla
         any_addr.setIPv4();
 
     ll->fd = comm_open(SOCK_DGRAM, IPPROTO_UDP, any_addr, COMM_NONBLOCKING, "UDP log socket");
-    int xerrno = errno;
     if (ll->fd < 0) {
         if (lf->flags.fatal) {
             fatalf("Unable to open UDP socket for logging\n");
@@ -176,26 +174,25 @@ logfile_mod_udp_open(Logfile * lf, const char *path, size_t bufsz, int fatal_fla
             return FALSE;
         }
     } else if (!comm_connect_addr(ll->fd, addr)) {
-        xerrno = errno;
         if (lf->flags.fatal) {
-            fatalf("Unable to connect to %s for UDP log: %s\n", lf->path, xstrerr(xerrno));
+            fatalf("Unable to connect to %s for UDP log: %s\n", lf->path, xstrerror());
         } else {
-            debugs(50, DBG_IMPORTANT, "Unable to connect to " << lf->path << " for UDP log: " << xstrerr(xerrno));
+            debugs(50, DBG_IMPORTANT, "Unable to connect to " << lf->path << " for UDP log: " << xstrerror());
             return FALSE;
         }
     }
     if (ll->fd == -1) {
-        if (ENOENT == xerrno && fatal_flag) {
+        if (ENOENT == errno && fatal_flag) {
             fatalf("Cannot open '%s' because\n"
                    "\tthe parent directory does not exist.\n"
                    "\tPlease create the directory.\n", path);
-        } else if (EACCES == xerrno && fatal_flag) {
+        } else if (EACCES == errno && fatal_flag) {
             fatalf("Cannot open '%s' for writing.\n"
                    "\tThe parent directory must be writeable by the\n"
                    "\tuser '%s', which is the cache_effective_user\n"
                    "\tset in squid.conf.", path, Config.effectiveUser);
         } else {
-            debugs(50, DBG_IMPORTANT, "logfileOpen (UDP): " << lf->path << ": " << xstrerr(xerrno));
+            debugs(50, DBG_IMPORTANT, "logfileOpen (UDP): " << lf->path << ": " << xstrerror());
             return 0;
         }
     }

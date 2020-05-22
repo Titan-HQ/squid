@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -12,21 +12,23 @@
 #if USE_AUTH
 
 #include "auth/CredentialState.h"
-#include "auth/forward.h"
 #include "auth/Type.h"
-#include "base/CbcPointer.h"
 #include "base/RefCount.h"
 #include "dlink.h"
 #include "ip/Address.h"
 #include "Notes.h"
-#include "sbuf/SBuf.h"
+#include "SBuf.h"
 
+class AuthUserHashPointer;
 class StoreEntry;
 
 namespace Auth
 {
 
+class Config;
+
 /**
+ *  \ingroup AuthAPI
  * This is the main user related structure. It stores user-related data,
  * and is persistent across requests. It can even persist across
  * multiple external authentications. One major benefit of preserving this
@@ -38,16 +40,14 @@ class User : public RefCountable
 public:
     typedef RefCount<User> Pointer;
 
-protected:
-    User(Auth::SchemeConfig *, const char *requestRealm);
-public:
-    virtual ~User();
-
     /* extra fields for proxy_auth */
+    /* auth_type and auth_module are deprecated. Do Not add new users of these fields.
+     * Aim to remove shortly
+     */
     /** \deprecated this determines what scheme owns the user data. */
     Auth::Type auth_type;
     /** the config for this user */
-    Auth::SchemeConfig *config;
+    Auth::Config *config;
     dlink_list proxy_match_cache;
     size_t ipcount;
     long expiretime;
@@ -56,14 +56,17 @@ public:
     NotePairs notes;
 
 public:
+    static void cacheInit();
+    static void CachedACLsReset();
     static SBuf BuildUserKey(const char *username, const char *realm);
 
     void absorb(Auth::User::Pointer from);
+    virtual ~User();
     char const *username() const { return username_; }
     void username(char const *); ///< set stored username and userKey
 
     // NP: key is set at the same time as username_. Until then both are empty/NULL.
-    const SBuf userKey() const {return userKey_;}
+    const char *userKey() {return userKey_;}
 
     /**
      * How long these credentials are still valid for.
@@ -76,13 +79,8 @@ public:
     void removeIp(Ip::Address);
     void addIp(Ip::Address);
 
-    /// add the Auth::User to the protocol-specific username cache.
-    virtual void addToNameCache() = 0;
-    static void CredentialsCacheStats(StoreEntry * output);
-
-    // userKey ->Auth::User::Pointer cache
-    // must be reimplemented in subclasses
-    static CbcPointer<Auth::CredentialsCache> Cache();
+    void addToNameCache();
+    static void UsernameCacheStats(StoreEntry * output);
 
     CredentialState credentials() const;
     void credentials(CredentialState);
@@ -98,7 +96,16 @@ private:
      */
     CredentialState credentials_state;
 
+protected:
+    User(Auth::Config *, const char *requestRealm);
+
 private:
+    /**
+     * Garbage Collection for the username cache.
+     */
+    static void cacheCleanup(void *unused);
+    static time_t last_discard; /// Time of last username cache garbage collection.
+
     /**
      * DPW 2007-05-08
      * The username_ memory will be allocated via
@@ -109,13 +116,17 @@ private:
     /**
      * A realm for the user depending on request, designed to identify users,
      * with the same username and different authentication domains.
+     * The requestRealm_ memory will be allocated via xstrdup().
+     * It is our responsibility.
      */
-    SBuf requestRealm_;
+    const char *requestRealm_;
 
     /**
-     * A Unique key for the user, consist by username and requestRealm_
+     * A Unique key for the user, consist by username and realm.
+     * The userKey_ memory will be allocated via xstrdup().
+     * It is our responsibility.
      */
-    SBuf userKey_;
+    const char *userKey_;
 
     /** what ip addresses has this user been seen at?, plus a list length cache */
     dlink_list ip_list;

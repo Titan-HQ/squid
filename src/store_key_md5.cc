@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -11,7 +11,9 @@
 #include "squid.h"
 #include "HttpRequest.h"
 #include "md5.h"
+#include "Mem.h"
 #include "store_key_md5.h"
+#include "URL.h"
 
 static cache_key null_key[SQUID_MD5_DIGEST_LENGTH];
 
@@ -51,11 +53,9 @@ storeKeyScan(const char *buf)
 int
 storeKeyHashCmp(const void *a, const void *b)
 {
-    const unsigned char *A = (const unsigned char *)a;
-    const unsigned char *B = (const unsigned char *)b;
-    int i;
-
-    for (i = 0; i < SQUID_MD5_DIGEST_LENGTH; ++i) {
+    const unsigned char * const A = (const unsigned char *const )a;
+    const unsigned char *const B = (const unsigned char *const )b;
+    for (int i = 0; i < SQUID_MD5_DIGEST_LENGTH; ++i) {
         if (A[i] < B[i])
             return -1;
 
@@ -67,10 +67,10 @@ storeKeyHashCmp(const void *a, const void *b)
 }
 
 unsigned int
-storeKeyHashHash(const void *key, unsigned int n)
+storeKeyHashHash(const void *const key, unsigned int n)
 {
     /* note, n must be a power of 2! */
-    const unsigned char *digest = (const unsigned char *)key;
+    const unsigned char *const digest = (const unsigned char *const)key;
     unsigned int i = digest[0]
                      | digest[1] << 8
                      | digest[2] << 16
@@ -79,22 +79,22 @@ storeKeyHashHash(const void *key, unsigned int n)
 }
 
 const cache_key *
-storeKeyPrivate()
+storeKeyPrivate(const char *url, const HttpRequestMethod& method, int id)
 {
-    // only the count field is required
-    // others just simplify searching for keys in a multi-process cache.log
-    static struct {
-        uint64_t count;
-        pid_t pid;
-        int32_t kid;
-    } key = { 0, getpid(), KidIdentifier };
-    assert(sizeof(key) == SQUID_MD5_DIGEST_LENGTH);
-    ++key.count;
-    return reinterpret_cast<cache_key*>(&key);
+    static cache_key digest[SQUID_MD5_DIGEST_LENGTH];
+    SquidMD5_CTX M;
+    assert(id > 0);
+    debugs(20, 3, "storeKeyPrivate: " << method << " " << url);
+    SquidMD5Init(&M);
+    SquidMD5Update(&M, (unsigned char *) &id, sizeof(id));
+    SquidMD5Update(&M, (unsigned char *) &method, sizeof(method));
+    SquidMD5Update(&M, (unsigned char *) url, strlen(url));
+    SquidMD5Final(digest, &M);
+    return digest;
 }
 
 const cache_key *
-storeKeyPublic(const char *url, const HttpRequestMethod& method, const KeyScope keyScope)
+storeKeyPublic(const char *url, const HttpRequestMethod& method, const KeyScope keyScope )
 {
     static cache_key digest[SQUID_MD5_DIGEST_LENGTH];
     unsigned char m = (unsigned char) method.id();
@@ -103,29 +103,30 @@ storeKeyPublic(const char *url, const HttpRequestMethod& method, const KeyScope 
     SquidMD5Update(&M, &m, sizeof(m));
     SquidMD5Update(&M, (unsigned char *) url, strlen(url));
     if (keyScope)
-        SquidMD5Update(&M, &keyScope, sizeof(keyScope));
+	SquidMD5Update(&M, &keyScope, sizeof(keyScope));
     SquidMD5Final(digest, &M);
     return digest;
 }
 
 const cache_key *
-storeKeyPublicByRequest(HttpRequest * request, const KeyScope keyScope)
+storeKeyPublicByRequest(HttpRequest * request, const KeyScope keyScope )
 {
-    return storeKeyPublicByRequestMethod(request, request->method, keyScope);
+    return storeKeyPublicByRequestMethod(request, request->method, keyScope );
 }
 
 const cache_key *
-storeKeyPublicByRequestMethod(HttpRequest * request, const HttpRequestMethod& method, const KeyScope keyScope)
+storeKeyPublicByRequestMethod(HttpRequest * request, const HttpRequestMethod& method, const KeyScope keyScope )
 {
     static cache_key digest[SQUID_MD5_DIGEST_LENGTH];
     unsigned char m = (unsigned char) method.id();
-    const SBuf url = request->storeId(); /* returns the right storeID\URL for the MD5 calc */
+    const char *url = request->storeId(); /* storeId returns the right storeID\canonical URL for the md5 calc */
     SquidMD5_CTX M;
     SquidMD5Init(&M);
     SquidMD5Update(&M, &m, sizeof(m));
-    SquidMD5Update(&M, (unsigned char *) url.rawContent(), url.length());
+    SquidMD5Update(&M, (unsigned char *) url, strlen(url));
+
     if (keyScope)
-        SquidMD5Update(&M, &keyScope, sizeof(keyScope));
+	SquidMD5Update(&M, &keyScope, sizeof(keyScope));
 
     if (!request->vary_headers.isEmpty()) {
         SquidMD5Update(&M, request->vary_headers.rawContent(), request->vary_headers.length());

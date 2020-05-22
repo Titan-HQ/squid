@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -11,20 +11,18 @@
 
 #include "acl/forward.h"
 #include "base/RefCount.h"
+#include "CbDataList.h"
 #include "format/Format.h"
-#include "mem/forward.h"
+#include "MemPool.h"
 #include "SquidString.h"
+#include "typedefs.h"
 
 #include <string>
 #include <vector>
 
 class HttpRequest;
 class HttpReply;
-class AccessLogEntry;
-class NotePairs;
-
 typedef RefCount<AccessLogEntry> AccessLogEntryPointer;
-typedef RefCount<NotePairs> NotePairsPointer;
 
 /**
  * Used to store a note configuration. The notes are custom key:value
@@ -36,129 +34,85 @@ class Note: public RefCountable
 {
 public:
     typedef RefCount<Note> Pointer;
-
     /// Stores a value for the note.
     class Value: public RefCountable
     {
     public:
         typedef RefCount<Value> Pointer;
-        friend class Note;
-
-        enum Method { mhReplace, mhAppend };
-
-        Value(const char *aVal, const bool quoted, const char *descr, const Method method = mhReplace);
-        ~Value();
-        Value(const Value&) = delete;
-        Value &operator=(const Value&) = delete;
-
-        Method method() const { return theMethod; }
-        const SBuf &value() const { return theValue; }
-
+        String value; ///< Configured annotation value, possibly with %macros
         ACLList *aclList; ///< The access list used to determine if this value is valid for a request
-
-    private:
-        /// \return the formatted value with expanded logformat %macros (quoted values).
-        /// \return the original value (non-quoted values).
-        const SBuf &format(const AccessLogEntryPointer &al);
-
-        Format::Format *valueFormat; ///< Compiled annotation value format.
-        SBuf theValue; ///< Configured annotation value, possibly with %macros.
-        /// The expanded value produced by format(), empty for non-quoted values.
-        SBuf theFormattedValue;
-        /// Specifies how theValue will be applied to the existing annotation
-        /// with the same key: it either replaces the existing value or is appended
-        /// to the list of existing values.
-        Method theMethod;
+        /// Compiled annotation value format
+        Format::Format *valueFormat;
+        explicit Value(const String &aVal) : value(aVal), aclList(NULL), valueFormat(NULL) {}
+        ~Value();
     };
     typedef std::vector<Value::Pointer> Values;
 
-    Note(const char *aKey, const size_t keyLen): theKey(aKey, keyLen) {}
-    explicit Note(const SBuf aKey): theKey(aKey) {}
-    Note(const Note&) = delete;
-    Note &operator=(const Note&) = delete;
+    explicit Note(const String &aKey): key(aKey) {}
 
-    /// Adds a value to the note and returns a pointer to the
-    /// related Value object.
-    Value::Pointer addValue(const char *value, const bool quoted, const char *descr,
-                            const Value::Method m = Value::mhAppend);
+    /**
+     * Adds a value to the note and returns a  pointer to the
+     * related Value object.
+     */
+    Value::Pointer addValue(const String &value);
 
-    /// Walks through the  possible values list of the note, selects
-    /// the first value, matching the given HttpRequest and HttpReply
-    /// and assignes the given 'matched' to it.
-    /// \return true if matched, false otherwise
-    bool match(HttpRequest *request, HttpReply *reply, const AccessLogEntryPointer &al, SBuf &matched);
-    const SBuf &key() const { return theKey; }
-    void updateNotePairs(NotePairsPointer pairs, const CharacterSet *delimiters, const AccessLogEntryPointer &al);
-    /// Dump the single Note to the given StoreEntry object.
-    void dump(StoreEntry *entry, const char *key);
-    /// For the key and all its Values compile a string of
-    /// "Key: Value" pairs separated by sep string.
-    SBuf toString(const char *sep) const;
+    /**
+     * Walks through the  possible values list of the note and selects
+     * the first value which matches the given HttpRequest and HttpReply
+     * or NULL if none matches.
+     * If an AccessLogEntry given and Value::valueFormat is not null, the
+     * formatted value returned.
+     */
+    const char *match(HttpRequest *request, HttpReply *reply, const AccessLogEntryPointer &al);
 
-private:
-    SBuf theKey; ///< The note key
+    String key; ///< The note key
     Values values; ///< The possible values list for the note
 };
 
 class ConfigParser;
-
 /**
  * Used to store a notes configuration list.
  */
-class Notes : public RefCountable
+class Notes
 {
 public:
-    typedef RefCount<Notes> Pointer;
     typedef std::vector<Note::Pointer> NotesList;
     typedef NotesList::iterator iterator; ///< iterates over the notes list
     typedef NotesList::const_iterator const_iterator; ///< iterates over the notes list
 
-    Notes(const char *aDescr, const char **metasBlacklist, bool allowFormatted = true): descr(aDescr), blacklisted(metasBlacklist), formattedValues(allowFormatted) {}
-    Notes(): descr(nullptr), blacklisted(nullptr), formattedValues(false) {}
+    Notes(const char *aDescr, const char **metasBlacklist, bool allowFormatted = false): descr(aDescr), blacklisted(metasBlacklist), formattedValues(allowFormatted) {}
+    Notes(): descr(NULL), blacklisted(NULL), formattedValues(false) {}
     ~Notes() { notes.clear(); }
-    Notes(const Notes&) = delete;
-    Notes &operator=(const Notes&) = delete;
-
-    /// Parses a notes line and returns a pointer to the parsed Note object.
+    /**
+     * Parse a notes line and returns a pointer to the
+     * parsed Note object.
+     */
     Note::Pointer parse(ConfigParser &parser);
-
-    /// Parses an annotate line with "key=value" or "key+=value" formats.
-    void parseKvPair();
-
-    /// Dump the notes list to the given StoreEntry object.
+    /**
+     * Dump the notes list to the given StoreEntry object.
+     */
     void dump(StoreEntry *entry, const char *name);
-    /// clean the notes list
-    void clean() { notes.clear(); }
+    void clean(); /// clean the notes list
 
     /// points to the first argument
     iterator begin() { return notes.begin(); }
     /// points to the end of list
     iterator end() { return notes.end(); }
-    /// \returns true if the notes list is empty
-    bool empty() const { return notes.empty(); }
-    /// Convert Notes list to a string consist of "Key: Value"
-    /// entries separated by sep string.
-    const char *toString(const char *sep = "\r\n") const;
-    void updateNotePairs(NotePairsPointer pairs, const CharacterSet *delimiters,
-                         const AccessLogEntryPointer &al);
-private:
-
-    /// Verifies that the key is not blacklisted (fatal error) and
-    /// does not contain special characters (non-fatal error).
-    /// If keyLen is not provided, the key is assumed null-terminated.
-    void validateKey(const SBuf &key) const;
-
-    /// Adds a note to the notes list and returns a pointer to the
-    /// related Note object. If the note key already exists in list,
-    /// returns a pointer to the existing object.
-    /// If keyLen is not provided, the noteKey is assumed null-terminated.
-    Note::Pointer add(const SBuf &noteKey);
-    Note::Pointer find(const SBuf &noteKey);
+    /// return true if the notes list is empty
+    bool empty() { return notes.empty(); }
 
     NotesList notes; ///< The Note::Pointer objects array list
     const char *descr; ///< A short description for notes list
     const char **blacklisted; ///< Null terminated list of blacklisted note keys
     bool formattedValues; ///< Whether the formatted values are supported
+
+private:
+    /**
+     * Adds a note to the notes list and returns a pointer to the
+     * related Note object. If the note key already exists in list,
+     * returns a pointer to the existing object.
+     */
+    Note::Pointer add(const String &noteKey);
 };
 
 /**
@@ -169,87 +123,103 @@ class NotePairs: public RefCountable
 public:
     typedef RefCount<NotePairs> Pointer;
 
-    /// Used to store a note key/value pair.
-    class Entry : public RefCountable
+    /**
+     * Used to store a note key/value pair.
+     */
+    class Entry
     {
-        MEMPROXY_CLASS(Entry);
     public:
-        typedef RefCount<Entry> Pointer;
-
-        Entry(const SBuf &aKey, const SBuf &aValue)
-            : theName(aKey), theValue(aValue) {}
-        Entry(const char *aKey, const char *aValue)
-            : theName(aKey), theValue(aValue) {}
-        Entry(const Entry &) = delete;
-        Entry &operator=(const Entry &) = delete;
-
-        const SBuf &name() const { return theName; }
-        const SBuf &value() const { return theValue; }
-
-    private:
-        SBuf theName;
-        SBuf theValue;
+        Entry(const char *aKey, const char *aValue): name(aKey), value(aValue) {}
+        String name;
+        String value;
+        MEMPROXY_CLASS(Entry);
     };
-    typedef std::vector<Entry::Pointer> Entries;      ///< The key/value pair entries
 
     NotePairs() {}
-    NotePairs &operator=(NotePairs const &) = delete;
-    NotePairs(NotePairs const &) = delete;
+    ~NotePairs();
 
-    /// Append the entries of the src NotePairs list to our list.
+    /**
+     * Append the entries of the src NotePairs list to our list.
+     */
     void append(const NotePairs *src);
 
-    /// Replace existing list entries with the src NotePairs entries.
-    /// Entries which do not exist in the destination set are added.
+    /**
+     * Replace existing list entries with the src NotePairs entries.
+     * Entries which do not exist in the destination set are added.
+     */
     void replaceOrAdd(const NotePairs *src);
 
-    /// Append any new entries of the src NotePairs list to our list.
-    /// Entries which already exist in the destination set are ignored.
+    /**
+     * Append any new entries of the src NotePairs list to our list.
+     * Entries which already exist in the destination set are ignored.
+     */
     void appendNewOnly(const NotePairs *src);
 
-    /// \param resultNote a comma separated list of notes with key 'noteKey'.
-    /// \returns true if there are entries with the given 'noteKey'.
-    /// Use findFirst() instead when a unique kv-pair is needed.
-    bool find(SBuf &resultNote, const char *noteKey, const char *sep = ",") const;
+    /**
+     * Returns a comma separated list of notes with key 'noteKey'.
+     * Use findFirst instead when a unique kv-pair is needed.
+     */
+    const char *find(const char *noteKey, const char *sep = ",") const;
 
-    /// \returns the first note value for this key or an empty string.
+    /**
+     * Returns the first note value for this key or an empty string.
+     */
     const char *findFirst(const char *noteKey) const;
 
-    /// Adds a note key and value to the notes list.
-    /// If the key name already exists in the list, add the given value to its set
-    /// of values.
-    void add(const SBuf &key, const SBuf &value);
+    /**
+     * Adds a note key and value to the notes list.
+     * If the key name already exists in list, add the given value to its set
+     * of values.
+     */
     void add(const char *key, const char *value);
 
-    /// Remove all notes with a given key. If keyLen is not
-    /// provided, the key is assumed null-terminated.
+    /**
+     * Remove all notes with a given key.
+     */
     void remove(const char *key);
-    void remove(const SBuf &key);
 
-    /// Adds a note key and values strList to the notes list.
-    /// If the key name already exists in the list, add the new values to its set
-    /// of values.
-    void addStrList(const SBuf &key, const SBuf &values, const CharacterSet &delimiters);
+    /**
+     * Adds a note key and values strList to the notes list.
+     * If the key name already exists in list, add the new values to its set
+     * of values.
+     */
+    void addStrList(const char *key, const char *values);
 
-    /// \returns true if the key/value pair is already stored
-    bool hasPair(const SBuf &key, const SBuf &value) const;
+    /**
+     * Return true if the key/value pair is already stored
+     */
+    bool hasPair(const char *key, const char *value) const;
 
-    /// Convert NotePairs list to a string consist of "Key: Value"
-    /// entries separated by sep string.
+    /**
+     * Convert NotePairs list to a string consist of "Key: Value"
+     * entries separated by sep string.
+     */
     const char *toString(const char *sep = "\r\n") const;
 
-    /// \returns true if there are not entries in the list
+    /**
+     * True if there are not entries in the list
+     */
     bool empty() const {return entries.empty();}
 
-    void clear() { entries.clear(); }
-
-    /// If delimiters are provided, returns another Entries, converting each single multi-token
-    /// pair to multiple single-token pairs; returns existing entries otherwise.
-    const Entries &expandListEntries(const CharacterSet *delimiters) const;
+    std::vector<NotePairs::Entry *> entries;      ///< The key/value pair entries
 
 private:
-    Entries entries; ///< The key/value pair entries
+    NotePairs &operator = (NotePairs const &); // Not implemented
+    NotePairs(NotePairs const &); // Not implemented
 };
 
+MEMPROXY_CLASS_INLINE(NotePairs::Entry);
+
+class AccessLogEntry;
+/**
+ * Keep in sync HttpRequest and the corresponding AccessLogEntry objects
+ */
+NotePairs &SyncNotes(AccessLogEntry &ale, HttpRequest &request);
+
+class ConnStateData;
+/**
+ * Updates ConnStateData ids and HttpRequest notes from helpers received notes.
+ */
+void UpdateRequestNotes(ConnStateData *csd, HttpRequest &request, NotePairs const &notes);
 #endif
 

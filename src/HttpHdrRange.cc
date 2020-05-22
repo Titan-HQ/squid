@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -10,7 +10,6 @@
 
 #include "squid.h"
 #include "client_side_request.h"
-#include "http/Stream.h"
 #include "HttpHeaderRange.h"
 #include "HttpHeaderTools.h"
 #include "HttpReply.h"
@@ -106,14 +105,15 @@ HttpHdrRangeSpec::parseInit(const char *field, int flen)
 }
 
 void
-HttpHdrRangeSpec::packInto(Packable * p) const
+HttpHdrRangeSpec::packInto(Packer * packer) const
 {
     if (!known_spec(offset))    /* suffix */
-        p->appendf("-%" PRId64, length);
+        packerPrintf(packer, "-%" PRId64,  length);
     else if (!known_spec(length))       /* trailer */
-        p->appendf("%" PRId64 "-", offset);
+        packerPrintf(packer, "%" PRId64 "-", offset);
     else            /* range */
-        p->appendf("%" PRId64 "-%" PRId64, offset, offset + length - 1);
+        packerPrintf(packer, "%" PRId64 "-%" PRId64,
+                     offset, offset + length - 1);
 }
 
 void
@@ -303,13 +303,13 @@ HttpHdrRange::end() const
 }
 
 void
-HttpHdrRange::packInto(Packable * packer) const
+HttpHdrRange::packInto(Packer * packer) const
 {
     const_iterator pos = begin();
 
     while (pos != end()) {
         if (pos != begin())
-            packer->append(",", 1);
+            packerAppend(packer, ",", 1);
 
         (*pos)->packInto(packer);
 
@@ -372,8 +372,8 @@ HttpHdrRange::canonize(HttpReply *rep)
 {
     assert(rep);
 
-    if (rep->contentRange())
-        clen = rep->contentRange()->elength;
+    if (rep->content_range)
+        clen = rep->content_range->elength;
     else
         clen = rep->content_length;
 
@@ -527,7 +527,7 @@ HttpHdrRange::offsetLimitExceeded(const int64_t limit) const
 }
 
 bool
-HttpHdrRange::contains(const HttpHdrRangeSpec& r) const
+HttpHdrRange::contains(HttpHdrRangeSpec& r) const
 {
     assert(r.length >= 0);
     HttpHdrRangeSpec::HttpRange rrange(r.offset, r.offset + r.length);

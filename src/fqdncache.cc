@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -10,18 +10,17 @@
 
 #include "squid.h"
 #include "cbdata.h"
-#include "dns/forward.h"
-#include "dns/LookupDetails.h"
-#include "dns/rfc1035.h"
+#include "DnsLookupDetails.h"
 #include "event.h"
-#include "fqdncache.h"
 #include "helper.h"
+#include "Mem.h"
 #include "mgr/Registration.h"
 #include "SquidConfig.h"
+#include "SquidDns.h"
 #include "SquidTime.h"
 #include "StatCounters.h"
 #include "Store.h"
-#include "util.h"
+#include "wordlist.h"
 
 #if SQUID_SNMP
 #include "snmp_core.h"
@@ -71,6 +70,7 @@
 #define FQDN_HIGH_WATER      95
 
 /**
+ \ingroup FQDNCacheAPI
  * The data structure used for storing name-address mappings
  * is a small hashtable (static hash_table *fqdn_table),
  * where structures of type fqdncache_entry whose most
@@ -78,12 +78,7 @@
  */
 class fqdncache_entry
 {
-    MEMPROXY_CLASS(fqdncache_entry);
-
 public:
-    fqdncache_entry(const char *name);
-    ~fqdncache_entry();
-
     hash_link hash;     /* must be first */
     time_t lastref;
     time_t expires;
@@ -97,9 +92,7 @@ public:
     dlink_node lru;
     unsigned short locks;
 
-    struct Flags {
-        Flags() : negcached(false), fromhosts(false) {}
-
+    struct {
         bool negcached;
         bool fromhosts;
     } flags;
@@ -122,6 +115,7 @@ static dlink_list lru_list;
 static IDNSCB fqdncacheHandleReply;
 static int fqdncacheParse(fqdncache_entry *, const rfc1035_rr *, int, const char *error_message);
 static void fqdncacheRelease(fqdncache_entry *);
+static fqdncache_entry *fqdncacheCreateEntry(const char *name);
 static void fqdncacheCallback(fqdncache_entry *, int wait);
 static fqdncache_entry *fqdncache_get(const char *);
 static int fqdncacheExpiredEntry(const fqdncache_entry *);
@@ -155,10 +149,21 @@ fqdncache_entry::age() const
 static void
 fqdncacheRelease(fqdncache_entry * f)
 {
+    int k;
     hash_remove_link(fqdn_table, (hash_link *) f);
+
+    for (k = 0; k < (int) f->name_count; ++k)
+        safe_free(f->names[k]);
+
     debugs(35, 5, "fqdncacheRelease: Released FQDN record for '" << hashKeyStr(&f->hash) << "'.");
+
     dlinkDelete(&f->lru, &lru_list);
-    delete f;
+
+    safe_free(f->hash.key);
+
+    safe_free(f->error_message);
+
+    memFree(f, MEM_FQDNCACHE_ENTRY);
 }
 
 /**
@@ -198,7 +203,7 @@ fqdncacheExpiredEntry(const fqdncache_entry * f)
 
 /// \ingroup FQDNCacheAPI
 void
-fqdncache_purgelru(void *)
+fqdncache_purgelru(void *notused)
 {
     dlink_node *m;
     dlink_node *prev = NULL;
@@ -251,19 +256,19 @@ purge_entries_fromhosts(void)
         fqdncacheRelease(i);
 }
 
-fqdncache_entry::fqdncache_entry(const char *name) :
-    lastref(0),
-    expires(squid_curtime + Config.negativeDnsTtl),
-    name_count(0),
-    handler(nullptr),
-    handlerData(nullptr),
-    error_message(nullptr),
-    locks(0) // XXX: use Lock
+/**
+ \ingroup FQDNCacheInternal
+ *
+ * Create blank fqdncache_entry
+ */
+static fqdncache_entry *
+fqdncacheCreateEntry(const char *name)
 {
-    hash.key = xstrdup(name);
-
-    memset(&request_time, 0, sizeof(request_time));
-    memset(&names, 0, sizeof(names));
+    static fqdncache_entry *f;
+    f = (fqdncache_entry *)memAllocate(MEM_FQDNCACHE_ENTRY);
+    f->hash.key = xstrdup(name);
+    f->expires = squid_curtime + Config.negativeDnsTtl;
+    return f;
 }
 
 /// \ingroup FQDNCacheInternal
@@ -278,6 +283,7 @@ fqdncacheAddEntry(fqdncache_entry * f)
         fqdncacheRelease(q);
     }
 
+    f->hash.next=NULL;
     hash_join(fqdn_table, &f->hash);
     dlinkAdd(f, &f->lru, &lru_list);
     f->lastref = squid_curtime;
@@ -305,7 +311,7 @@ fqdncacheCallback(fqdncache_entry * f, int wait)
     f->handler = NULL;
 
     if (cbdataReferenceValidDone(f->handlerData, &cbdata)) {
-        const Dns::LookupDetails details(f->error_message, wait);
+        const DnsLookupDetails details(f->error_message, wait);
         callback(f->name_count ? f->names[0] : NULL, details, cbdata);
     }
 
@@ -388,9 +394,8 @@ fqdncacheParse(fqdncache_entry *f, const rfc1035_rr * answers, int nr, const cha
  * Callback for handling DNS results.
  */
 static void
-fqdncacheHandleReply(void *data, const rfc1035_rr * answers, int na, const char *error_message, const bool lastAnswer)
+fqdncacheHandleReply(void *data, const rfc1035_rr * answers, int na, const char *error_message)
 {
-    assert(lastAnswer); // reverse DNS lookups do not generate multiple queries
     fqdncache_entry *f;
     static_cast<generic_cbdata *>(data)->unwrap(&f);
     ++FqdncacheStats.replies;
@@ -423,7 +428,7 @@ fqdncache_nbgethostbyaddr(const Ip::Address &addr, FQDNH * handler, void *handle
 
     if (name[0] == '\0') {
         debugs(35, 4, "fqdncache_nbgethostbyaddr: Invalid name!");
-        const Dns::LookupDetails details("Invalid hostname", -1); // error, no lookup
+        const DnsLookupDetails details("Invalid hostname", -1); // error, no lookup
         if (handler)
             handler(NULL, details, handlerData);
         return;
@@ -458,7 +463,7 @@ fqdncache_nbgethostbyaddr(const Ip::Address &addr, FQDNH * handler, void *handle
 
     debugs(35, 5, "fqdncache_nbgethostbyaddr: MISS for '" << name << "'");
     ++ FqdncacheStats.misses;
-    f = new fqdncache_entry(name);
+    f = fqdncacheCreateEntry(name);
     f->handler = handler;
     f->handlerData = cbdataReference(handlerData);
     f->request_time = current_time;
@@ -537,7 +542,7 @@ fqdnStats(StoreEntry * sentry)
     storeAppendPrintf(sentry, "FQDN Cache Statistics:\n");
 
     storeAppendPrintf(sentry, "FQDNcache Entries In Use: %d\n",
-                      fqdncache_entry::UseCount());
+                      memInUse(MEM_FQDNCACHE_ENTRY));
 
     storeAppendPrintf(sentry, "FQDNcache Entries Cached: %d\n",
                       fqdncacheCount());
@@ -600,19 +605,18 @@ fqdncacheUnlockEntry(fqdncache_entry * f)
 
 /// \ingroup FQDNCacheInternal
 static void
-fqdncacheFreeEntry(void *data)
+fqdncacheFreeEntry(void *const data)
 {
-    fqdncache_entry *f = (fqdncache_entry *)data;
-    delete f;
-}
+    if (fqdncache_entry *const f = (fqdncache_entry *const )data){
+       for (int k = 0; k < (int) f->name_count; ++k)
+           safe_free(f->names[k]);
 
-fqdncache_entry::~fqdncache_entry()
-{
-    for (int k = 0; k < (int)name_count; ++k)
-        xfree(names[k]);
+       safe_free(f->hash.key);
 
-    xfree(hash.key);
-    xfree(error_message);
+       safe_free(f->error_message);
+
+       memFree(f, MEM_FQDNCACHE_ENTRY);
+    };
 }
 
 /// \ingroup FQDNCacheAPI
@@ -642,33 +646,40 @@ fqdncache_restart(void)
 }
 
 /**
+ \ingroup FQDNCacheAPI
+ *
  * Adds a "static" entry from /etc/hosts.
+ \par
+ * The worldist is to be managed by the caller,
+ * including pointed-to strings
  *
  \param addr        FQDN name to be added.
- \param hostnames   list of hostnames for the addr
+ \param hostnames   ??
  */
 void
-fqdncacheAddEntryFromHosts(char *addr, SBufList &hostnames)
+fqdncacheAddEntryFromHosts(char *addr, wordlist * hostnames)
 {
-    fqdncache_entry *fce= fqdncache_get(addr);
-    if (fce) {
+    fqdncache_entry *fce;
+    int j = 0;
+
+    if ((fce = fqdncache_get(addr))) {
         if (1 == fce->flags.fromhosts) {
             fqdncacheUnlockEntry(fce);
         } else if (fce->locks > 0) {
-            debugs(35, DBG_IMPORTANT, "WARNING: can't add static entry for locked address '" << addr << "'");
+            debugs(35, DBG_IMPORTANT, "fqdncacheAddEntryFromHosts: can't add static entry for locked address '" << addr << "'");
             return;
         } else {
             fqdncacheRelease(fce);
         }
     }
 
-    fce = new fqdncache_entry(addr);
+    fce = fqdncacheCreateEntry(addr);
 
-    int j = 0;
-    for (auto &h : hostnames) {
-        fce->names[j] = xstrdup(h.c_str());
+    while (hostnames) {
+        fce->names[j] = xstrdup(hostnames->key);
         Tolower(fce->names[j]);
         ++j;
+        hostnames = hostnames->next;
 
         if (j >= FQDN_MAX_NAMES)
             break;
@@ -709,7 +720,8 @@ fqdncache_init(void)
     debugs(35, 3, "Initializing FQDN Cache...");
 
     memset(&FqdncacheStats, '\0', sizeof(FqdncacheStats));
-    lru_list = dlink_list();
+
+    memset(&lru_list, '\0', sizeof(lru_list));
 
     fqdncache_high = (long) (((float) Config.fqdncache.size *
                               (float) FQDN_HIGH_WATER) / (float) 100);
@@ -720,6 +732,9 @@ fqdncache_init(void)
     n = hashPrime(fqdncache_high / 4);
 
     fqdn_table = hash_create((HASHCMP *) strcmp, n, hash4);
+
+    memDataInit(MEM_FQDNCACHE_ENTRY, "fqdncache_entry",
+                sizeof(fqdncache_entry), 0);
 }
 
 #if SQUID_SNMP

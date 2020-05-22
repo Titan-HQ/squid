@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -9,9 +9,8 @@
 #ifndef SQUID_IPC_MEM_PAGE_STACK_H
 #define SQUID_IPC_MEM_PAGE_STACK_H
 
+#include "ipc/AtomicWord.h"
 #include "ipc/mem/FlexibleArray.h"
-
-#include <atomic>
 
 namespace Ipc
 {
@@ -34,7 +33,7 @@ public:
     unsigned int capacity() const { return theCapacity; }
     size_t pageSize() const { return thePageSize; }
     /// lower bound for the number of free pages
-    unsigned int size() const { return max(0, theSize.load()); }
+    unsigned int size() const { return max(0, theSize.get()); }
 
     /// sets value and returns true unless no free page numbers are found
     bool pop(PageId &page);
@@ -64,14 +63,14 @@ private:
     const Offset theCapacity; ///< stack capacity, i.e. theItems size
     const size_t thePageSize; ///< page size, used to calculate shared memory size
     /// lower bound for the number of free pages (may get negative!)
-    std::atomic<Offset> theSize;
+    Atomic::WordT<Offset> theSize;
 
     /// last readable item index; just a hint, not a guarantee
-    std::atomic<Offset> theLastReadable;
+    Atomic::WordT<Offset> theLastReadable;
     /// first writable item index; just a hint, not a guarantee
-    std::atomic<Offset> theFirstWritable;
+    Atomic::WordT<Offset> theFirstWritable;
 
-    typedef std::atomic<Value> Item;
+    typedef Atomic::WordT<Value> Item;
     Ipc::Mem::FlexibleArray<Item> theItems; ///< page number storage
 };
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -22,7 +22,6 @@
 #include "cache_cf.h"
 #include "client_side.h"
 #include "helper.h"
-#include "http/Stream.h"
 #include "HttpHeaderTools.h"
 #include "HttpReply.h"
 #include "HttpRequest.h"
@@ -54,7 +53,7 @@ Auth::Ntlm::Config::rotateHelpers()
 void
 Auth::Ntlm::Config::done()
 {
-    Auth::SchemeConfig::done();
+    Auth::Config::done();
 
     authntlm_initialised = 0;
 
@@ -74,6 +73,35 @@ Auth::Ntlm::Config::done()
     debugs(29, DBG_IMPORTANT, "Reconfigure: NTLM authentication configuration cleared.");
 }
 
+bool
+Auth::Ntlm::Config::dump(StoreEntry * entry, const char *name, Auth::Config * scheme) const
+{
+    if (!Auth::Config::dump(entry, name, scheme))
+        return false;
+
+    storeAppendPrintf(entry, "%s ntlm keep_alive %s\n", name, keep_alive ? "on" : "off");
+    return true;
+}
+
+Auth::Ntlm::Config::Config() : keep_alive(1)
+{ }
+
+void
+Auth::Ntlm::Config::parse(Auth::Config * scheme, int n_configured, char *param_str)
+{
+    if (strcmp(param_str, "program") == 0) {
+        if (authenticateProgram)
+            wordlistDestroy(&authenticateProgram);
+
+        parse_wordlist(&authenticateProgram);
+
+        requirePathnameExists("auth_param ntlm program", authenticateProgram->key);
+    } else if (strcmp(param_str, "keep_alive") == 0) {
+        parse_onoff(&keep_alive);
+    } else
+        Auth::Config::parse(scheme, n_configured, param_str);
+}
+
 const char *
 Auth::Ntlm::Config::type() const
 {
@@ -83,7 +111,7 @@ Auth::Ntlm::Config::type() const
 /* Initialize helpers and the like for this auth scheme. Called AFTER parsing the
  * config file */
 void
-Auth::Ntlm::Config::init(Auth::SchemeConfig *)
+Auth::Ntlm::Config::init(Auth::Config * scheme)
 {
     if (authenticateProgram) {
 
@@ -136,7 +164,7 @@ Auth::Ntlm::Config::configured() const
 /* NTLM Scheme */
 
 void
-Auth::Ntlm::Config::fixHeader(Auth::UserRequest::Pointer auth_user_request, HttpReply *rep, Http::HdrType hdrType, HttpRequest * request)
+Auth::Ntlm::Config::fixHeader(Auth::UserRequest::Pointer auth_user_request, HttpReply *rep, http_hdr_type hdrType, HttpRequest * request)
 {
     if (!authenticateProgram)
         return;
@@ -196,8 +224,7 @@ Auth::Ntlm::Config::fixHeader(Auth::UserRequest::Pointer auth_user_request, Http
 static void
 authenticateNTLMStats(StoreEntry * sentry)
 {
-    if (ntlmauthenticators)
-        ntlmauthenticators->packStatsInto(sentry, "NTLM Authenticator Statistics");
+    helperStatefulStats(sentry, ntlmauthenticators, "NTLM Authenticator Statistics");
 }
 
 /*
@@ -207,7 +234,7 @@ authenticateNTLMStats(StoreEntry * sentry)
 Auth::UserRequest::Pointer
 Auth::Ntlm::Config::decode(char const *proxy_auth, const char *aRequestRealm)
 {
-    Auth::Ntlm::User *newUser = new Auth::Ntlm::User(Auth::SchemeConfig::Find("ntlm"), aRequestRealm);
+    Auth::Ntlm::User *newUser = new Auth::Ntlm::User(Auth::Config::Find("ntlm"), aRequestRealm);
     Auth::UserRequest::Pointer auth_user_request = new Auth::Ntlm::UserRequest();
     assert(auth_user_request->user() == NULL);
 

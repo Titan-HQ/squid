@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -37,7 +37,7 @@ ExternalACLEntry::update(ExternalACLEntryData const &someData)
     result = someData.result;
 
     // replace all notes. not combine
-    notes.clear();
+    notes.entries.clear();
     notes.append(&someData.notes);
 
 #if USE_AUTH

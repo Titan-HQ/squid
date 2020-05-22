@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -11,7 +11,6 @@
 #include "squid.h"
 #include "comm/Loops.h"
 #include "Debug.h"
-#include "fatal.h"
 #include "fd.h"
 #include "fde.h"
 #include "globals.h"
@@ -25,16 +24,16 @@
 #define MSG_NOSIGNAL 0
 #endif
 
-int default_read_method(int, char *, int);
-int default_write_method(int, const char *, int);
+int default_read_method(const int, char *const, const int);
+int default_write_method(const int, const char *const , const int);
 #if _SQUID_WINDOWS_
 int socket_read_method(int, char *, int);
 int socket_write_method(int, const char *, int);
 int file_read_method(int, char *, int);
 int file_write_method(int, const char *, int);
 #else
-int msghdr_read_method(int, char *, int);
-int msghdr_write_method(int, const char *, int);
+int msghdr_read_method(const int, char *const , const int);
+int msghdr_write_method(const int, const char *const ,const  int);
 #endif
 
 const char *fdTypeStr[] = {
@@ -47,10 +46,10 @@ const char *fdTypeStr[] = {
     "Unknown"
 };
 
-static void fdUpdateBiggest(int fd, int);
+static void fdUpdateBiggest(const int fd,const  int);
 
 static void
-fdUpdateBiggest(int fd, int opening)
+fdUpdateBiggest(const int fd,const int opening)
 {
     if (fd < Biggest_FD)
         return;
@@ -79,24 +78,27 @@ fdUpdateBiggest(int fd, int opening)
 }
 
 void
-fd_close(int fd)
+fd_close(const int fd)
 {
-    fde *F = &fd_table[fd];
+    if (-1!=fd){
+       fde *const F = &fd_table[fd];
+       assert(F->flags.open);
 
-    assert(fd >= 0);
-    assert(F->flags.open);
+       if (F->type == FD_FILE) {
+           assert(F->read_handler == NULL);
+           assert(F->write_handler == NULL);
+       }
 
-    if (F->type == FD_FILE) {
-        assert(F->read_handler == NULL);
-        assert(F->write_handler == NULL);
-    }
-
-    debugs(51, 3, "fd_close FD " << fd << " " << F->desc);
-    Comm::ResetSelect(fd);
-    F->flags.open = false;
-    fdUpdateBiggest(fd, 0);
-    --Number_FD;
-    F->clear();
+       debugs(51, 3, "fd_close FD " << fd << " " << F->desc);
+       Comm::SetSelect(fd, COMM_SELECT_READ, NULL, NULL, 0);
+       Comm::SetSelect(fd, COMM_SELECT_WRITE, NULL, NULL, 0);
+       F->flags.open = false;
+       fdUpdateBiggest(fd, 0);
+       --Number_FD;
+       *F = fde();
+       return;
+    };
+    assert(0 && "fd_close");
 }
 
 #if _SQUID_WINDOWS_
@@ -143,156 +145,182 @@ file_write_method(int fd, const char *buf, int len)
 
 #else
 int
-default_read_method(int fd, char *buf, int len)
+default_read_method(const int fd, char *const buf,const  int len)
 {
-    int i;
-    PROF_start(read);
-    i = read(fd, buf, len);
-    PROF_stop(read);
-    return i;
+    if (-1!=fd){
+
+       if (buf && len>0){
+          PROF_start(read);
+          const int i = read(fd, buf, len);
+          PROF_stop(read);
+          return i;
+       };
+       return -1;
+    };
+    assert(0 && "default_read_method");
+    return -1;
 }
 
 int
-default_write_method(int fd, const char *buf, int len)
+default_write_method(const int fd, const char *const buf,const int len)
 {
-    int i;
-    PROF_start(write);
-    i = write(fd, buf, len);
-    PROF_stop(write);
-    return i;
+
+   if (-1!=fd){
+      if (buf && len>0){
+         PROF_start(write);
+         const int i=write(fd, buf, len);
+         PROF_stop(write);
+         return i;
+      }return -1;
+   };
+   assert(0 && "default_write_method");
+   return -1;
 }
 
 int
-msghdr_read_method(int fd, char *buf, int)
+msghdr_read_method(const int fd, char *const buf,const  int len)
 {
-    PROF_start(read);
-    const int i = recvmsg(fd, reinterpret_cast<msghdr*>(buf), MSG_DONTWAIT);
-    PROF_stop(read);
-    return i;
+   if (-1!=fd){
+      if (buf && len>0){
+         PROF_start(read);
+         const int i = recvmsg(fd, reinterpret_cast<msghdr*>(buf), MSG_DONTWAIT);
+         PROF_stop(read);
+         return i;
+      };
+      return -1;
+   }
+   assert(0 && "msghdr_read_method");
+   return -1;
 }
 
 int
-msghdr_write_method(int fd, const char *buf, int len)
+msghdr_write_method(const int fd, const char *const buf, const int len)
 {
-    PROF_start(write);
-    const int i = sendmsg(fd, reinterpret_cast<const msghdr*>(buf), MSG_NOSIGNAL);
-    PROF_stop(write);
-    return i > 0 ? len : i; // len is imprecise but the caller expects a match
+   if (-1!=fd){
+      if (buf && len>0){
+         PROF_start(write);
+         const int i = sendmsg(fd, reinterpret_cast<const msghdr*>(buf), MSG_NOSIGNAL);
+         PROF_stop(write);
+         return i > 0 ? len : i; // len is imprecise but the caller expects a match
+      };
+      return -1;
+   };
+   assert(0 && "msghdr_write_method");
+   return -1;
 }
 
 #endif
 
 void
-fd_open(int fd, unsigned int type, const char *desc)
+fd_open(const int fd,const unsigned int type, const char *const desc)
 {
-    fde *F;
-    assert(fd >= 0);
-    F = &fd_table[fd];
 
-    if (F->flags.open) {
-        debugs(51, DBG_IMPORTANT, "WARNING: Closing open FD " << std::setw(4) << fd);
-        fd_close(fd);
-    }
+    if (-1!=fd){
+       fde *const F= &fd_table[fd];
+       if (F->flags.open) {
+           debugs(51, DBG_IMPORTANT, "WARNING: Closing open FD " << std::setw(4) << fd);
+           fd_close(fd);
+       }
+       assert(!F->flags.open);
+       debugs(51, 3, "fd_open() FD " << fd << " " << (desc?desc:"<empty>"));
+       F->type = type;
+       F->flags.open = true;
+       F->epoll_state = 0;
+   #if _SQUID_WINDOWS_
 
-    assert(!F->flags.open);
-    debugs(51, 3, "fd_open() FD " << fd << " " << desc);
-    F->type = type;
-    F->flags.open = true;
-    F->epoll_state = 0;
-#if _SQUID_WINDOWS_
+       F->win32.handle = _get_osfhandle(fd);
 
-    F->win32.handle = _get_osfhandle(fd);
+       switch (type) {
 
-    switch (type) {
+       case FD_SOCKET:
 
-    case FD_SOCKET:
+       case FD_PIPE:
+           F->read_method = &socket_read_method;
+           F->write_method = &socket_write_method;
+           break;
 
-    case FD_PIPE:
-        F->read_method = &socket_read_method;
-        F->write_method = &socket_write_method;
-        break;
+       case FD_FILE:
 
-    case FD_FILE:
+       case FD_LOG:
+           F->read_method = &file_read_method;
+           F->write_method = &file_write_method;
+           break;
 
-    case FD_LOG:
-        F->read_method = &file_read_method;
-        F->write_method = &file_write_method;
-        break;
+       default:
+           fatalf("fd_open(): unknown FD type - FD#: %i, type: %u, desc %s\n", fd, type, desc);
+       }
 
-    default:
-        fatalf("fd_open(): unknown FD type - FD#: %i, type: %u, desc %s\n", fd, type, desc);
-    }
+   #else
+       switch (type) {
 
-#else
-    switch (type) {
+       case FD_MSGHDR:
+           F->read_method = &msghdr_read_method;
+           F->write_method = &msghdr_write_method;
+           break;
 
-    case FD_MSGHDR:
-        F->read_method = &msghdr_read_method;
-        F->write_method = &msghdr_write_method;
-        break;
+       default:
+           F->read_method = &default_read_method;
+           F->write_method = &default_write_method;
+           break;
+       }
 
-    default:
-        F->read_method = &default_read_method;
-        F->write_method = &default_write_method;
-        break;
-    }
+   #endif
 
-#endif
+       fdUpdateBiggest(fd, 1);
 
-    fdUpdateBiggest(fd, 1);
+       fd_note(fd, desc);
 
-    fd_note(fd, desc);
-
-    ++Number_FD;
+       ++Number_FD;
+       return;
+   };
+    assert(0 && "fd_open");
 }
 
 void
-fd_note(int fd, const char *s)
+fd_note(const int fd, const char *const s)
 {
-    fde *F = &fd_table[fd];
-    if (s)
-        xstrncpy(F->desc, s, FD_DESC_SZ);
-    else
-        *(F->desc) = 0; // ""-string
+    if (-1!=fd)
+    if (fde *const F = &fd_table[fd]){
+       if (s)
+           xstrncpy(F->desc, s, FD_DESC_SZ);
+       else
+           *(F->desc) = 0; // ""-string
+    }
 }
 
 void
-fd_bytes(int fd, int len, unsigned int type)
+fd_bytes(const int fd,const  int len,const unsigned int type)
 {
-    fde *F = &fd_table[fd];
+   if (-1!=fd && len>0)
+   if (fde *const F = &fd_table[fd]){
+      assert(type == FD_READ || type == FD_WRITE);
 
-    if (len < 0)
-        return;
-
-    assert(type == FD_READ || type == FD_WRITE);
-
-    if (type == FD_READ)
-        F->bytes_read += len;
-    else
-        F->bytes_written += len;
+       if (type == FD_READ)
+           F->bytes_read += len;
+       else
+           F->bytes_written += len;
+   };
 }
+
 
 void
 fdDumpOpen(void)
 {
-    int i;
-    fde *F;
+    for (int i = 0; i < Squid_MaxFD; ++i) {
+        const fde *const F = &fd_table[i];
 
-    for (i = 0; i < Squid_MaxFD; ++i) {
-        F = &fd_table[i];
+           if (!F->flags.open)
+               continue;
 
-        if (!F->flags.open)
-            continue;
+           if (i == fileno(debug_log))
+               continue;
 
-        if (i == fileno(debug_log))
-            continue;
-
-        debugs(51, DBG_IMPORTANT, "Open FD "<< std::left<< std::setw(10) <<
-               (F->bytes_read && F->bytes_written ? "READ/WRITE" :
-                F->bytes_read ? "READING" : F->bytes_written ? "WRITING" :
-                "UNSTARTED")  <<
-               " "<< std::right << std::setw(4) << i  << " " << F->desc);
-    }
+           debugs(51, DBG_IMPORTANT, "Open FD "<< std::left<< std::setw(10) <<
+                  (F->bytes_read && F->bytes_written ? "READ/WRITE" :
+                   F->bytes_read ? "READING" : F->bytes_written ? "WRITING" :
+                   "UNSTARTED")  <<
+                  " "<< std::right << std::setw(4) << i  << " " << F->desc);
+    };
 }
 
 int

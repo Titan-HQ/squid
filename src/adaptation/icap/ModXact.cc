@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -22,15 +22,21 @@
 #include "auth/UserRequest.h"
 #include "base/TextException.h"
 #include "base64.h"
+#include "ChunkedCodingParser.h"
 #include "comm.h"
 #include "comm/Connection.h"
 #include "err_detail_type.h"
-#include "http/ContentLengthInterpreter.h"
-#include "http/one/TeChunkedParser.h"
 #include "HttpHeaderTools.h"
+#include "HttpMsg.h"
 #include "HttpReply.h"
-#include "MasterXaction.h"
+#include "HttpRequest.h"
 #include "SquidTime.h"
+#include "URL.h"
+
+
+// Titax.
+#include "TAPE.hxx"
+using namespace titan_v3;
 
 // flow and terminology:
 //     HTTP| --> receive --> encode --> write --> |network
@@ -48,7 +54,7 @@ Adaptation::Icap::ModXact::State::State()
     memset(this, 0, sizeof(*this));
 }
 
-Adaptation::Icap::ModXact::ModXact(Http::Message *virginHeader,
+Adaptation::Icap::ModXact::ModXact(HttpMsg *virginHeader,
                                    HttpRequest *virginCause, AccessLogEntry::Pointer &alp, Adaptation::Icap::ServiceRep::Pointer &aService):
     AsyncJob("Adaptation::Icap::ModXact"),
     Adaptation::Icap::Xaction("Adaptation::Icap::ModXact", aService),
@@ -59,7 +65,6 @@ Adaptation::Icap::ModXact::ModXact(Http::Message *virginHeader,
     replyHttpHeaderSize(-1),
     replyHttpBodySize(-1),
     adaptHistoryId(-1),
-    trailerParser(nullptr),
     alMaster(alp)
 {
     assert(virginHeader);
@@ -375,7 +380,7 @@ void Adaptation::Icap::ModXact::addLastRequestChunk(MemBuf &buf)
 
 void Adaptation::Icap::ModXact::openChunk(MemBuf &buf, size_t chunkSize, bool ieof)
 {
-    buf.appendf((ieof ? "%x; ieof\r\n" : "%x\r\n"), (int) chunkSize);
+    buf.Printf((ieof ? "%x; ieof\r\n" : "%x\r\n"), (int) chunkSize);
 }
 
 void Adaptation::Icap::ModXact::closeChunk(MemBuf &buf)
@@ -396,7 +401,7 @@ bool Adaptation::Icap::ModXact::virginBodyEndReached(const Adaptation::Icap::Vir
 {
     return
         !act.active() || // did all (assuming it was originally planned)
-        !virgin.body_pipe->expectMoreAfter(act.offset()); // will not have more
+        !virgin.body_pipe->expectMoreAfter(act.offset()); // wont have more
 }
 
 // the size of buffered virgin body data available for the specified activity
@@ -557,10 +562,10 @@ void Adaptation::Icap::ModXact::readMore()
         return;
     }
 
-    if (readBuf.length() < SQUID_TCP_SO_RCVBUF)
+    if (readBuf.hasSpace())
         scheduleRead();
     else
-        debugs(93,3,HERE << "cannot read with a full buffer");
+        debugs(93,3,HERE << "nothing to do because !readBuf.hasSpace()");
 }
 
 // comm module read a portion of the ICAP response for us
@@ -649,17 +654,17 @@ void Adaptation::Icap::ModXact::checkConsuming()
 
 void Adaptation::Icap::ModXact::parseMore()
 {
-    debugs(93, 5, "have " << readBuf.length() << " bytes to parse" << status());
-    debugs(93, 5, "\n" << readBuf);
+    debugs(93, 5, HERE << "have " << readBuf.contentSize() << " bytes to parse" <<
+           status());
+    debugs(93, 5, HERE << "\n" << readBuf.content());
 
-    if (state.parsingHeaders())
+    if (state.parsingHeaders()){
         parseHeaders();
+    }
 
-    if (state.parsing == State::psBody)
+    if (state.parsing == State::psBody){
         parseBody();
-
-    if (state.parsing == State::psIcapTrailer)
-        parseIcapTrailer();
+    }
 }
 
 void Adaptation::Icap::ModXact::callException(const std::exception &e)
@@ -701,7 +706,7 @@ void Adaptation::Icap::ModXact::bypassFailure()
 
     // end all activities associated with the ICAP server
 
-    stopParsing(false);
+    stopParsing();
 
     stopWriting(true); // or should we force it?
     if (haveConnection()) {
@@ -737,7 +742,7 @@ void Adaptation::Icap::ModXact::maybeAllocateHttpMsg()
         setOutcome(service().cfg().method == ICAP::methodReqmod ?
                    xoSatisfied : xoModified);
     } else if (gotEncapsulated("req-hdr")) {
-        adapted.setHeader(new HttpRequest(virginRequest().masterXaction));
+        adapted.setHeader(new HttpRequest);
         setOutcome(xoModified);
     } else
         throw TexcHere("Neither res-hdr nor req-hdr in maybeAllocateHttpMsg()");
@@ -774,16 +779,6 @@ void Adaptation::Icap::ModXact::startSending()
 
     if (state.sending == State::sendingVirgin)
         echoMore();
-    else {
-        // If we are not using the virgin HTTP object update the
-        // Http::Message::sources flag.
-        // The state.sending may set to State::sendingVirgin in the case
-        // of 206 responses too, where we do not want to update Http::Message::sources
-        // flag. However even for 206 responses the state.sending is
-        // not set yet to sendingVirgin. This is done in later step
-        // after the parseBody method called.
-        updateSources();
-    }
 }
 
 void Adaptation::Icap::ModXact::parseIcapHead()
@@ -793,13 +788,7 @@ void Adaptation::Icap::ModXact::parseIcapHead()
     if (!parseHead(icapReply.getRaw()))
         return;
 
-    if (expectIcapTrailers()) {
-        Must(!trailerParser);
-        trailerParser = new TrailerParser;
-    }
-
-    static SBuf close("close", 5);
-    if (httpHeaderHasConnDir(&icapReply->header, close)) {
+    if (httpHeaderHasConnDir(&icapReply->header, "close")) {
         debugs(93, 5, HERE << "found connection close");
         reuseConnection = false;
     }
@@ -852,12 +841,12 @@ void Adaptation::Icap::ModXact::parseIcapHead()
     // update the adaptation plan if needed (all status codes!)
     if (service().cfg().routing) {
         String services;
-        if (icapReply->header.getList(Http::HdrType::X_NEXT_SERVICES, &services)) {
+        if (icapReply->header.getList(HDR_X_NEXT_SERVICES, &services)) {
             Adaptation::History::Pointer ah = request->adaptHistory(true);
             if (ah != NULL)
                 ah->updateNextServices(services);
         }
-    } // TODO: else warn (occasionally!) if we got Http::HdrType::X_NEXT_SERVICES
+    } // TODO: else warn (occasionally!) if we got HDR_X_NEXT_SERVICES
 
     // We need to store received ICAP headers for <icapLastHeader logformat option.
     // If we already have stored headers from previous ICAP transaction related to this
@@ -873,24 +862,23 @@ void Adaptation::Icap::ModXact::parseIcapHead()
         stopWriting(true);
 }
 
-/// Parses ICAP trailers and stops parsing, if all trailer data
-/// have been received.
-void Adaptation::Icap::ModXact::parseIcapTrailer() {
-
-    if (parsePart(trailerParser, "trailer")) {
-        for (const auto &e: trailerParser->trailer.entries)
-            debugs(93, 5, "ICAP trailer: " << e->name << ": " << e->value);
-        stopParsing();
-    }
-}
-
 bool Adaptation::Icap::ModXact::validate200Ok()
 {
-    if (service().cfg().method == ICAP::methodRespmod)
-        return gotEncapsulated("res-hdr");
+    if (ICAP::methodRespmod == service().cfg().method) {
+        if (!gotEncapsulated("res-hdr"))
+            return false;
 
-    return service().cfg().method == ICAP::methodReqmod &&
-           expectHttpHeader();
+        return true;
+    }
+
+    if (ICAP::methodReqmod == service().cfg().method) {
+        if (!gotEncapsulated("res-hdr") && !gotEncapsulated("req-hdr"))
+            return false;
+
+        return true;
+    }
+
+    return false;
 }
 
 void Adaptation::Icap::ModXact::handle100Continue()
@@ -953,12 +941,12 @@ void Adaptation::Icap::ModXact::prepEchoing()
     setOutcome(xoEcho);
 
     // We want to clone the HTTP message, but we do not want
-    // to copy some non-HTTP state parts that Http::Message kids carry in them.
+    // to copy some non-HTTP state parts that HttpMsg kids carry in them.
     // Thus, we cannot use a smart pointer, copy constructor, or equivalent.
     // Instead, we simply write the HTTP message and "clone" it by parsing.
-    // TODO: use Http::Message::clone()!
+    // TODO: use HttpMsg::clone()!
 
-    Http::Message *oldHead = virgin.header;
+    HttpMsg *oldHead = virgin.header;
     debugs(93, 7, HERE << "cloning virgin message " << oldHead);
 
     MemBuf httpBuf;
@@ -970,13 +958,13 @@ void Adaptation::Icap::ModXact::prepEchoing()
     // allocate the adapted message and copy metainfo
     Must(!adapted.header);
     {
-        Http::MessagePointer newHead;
-        if (const HttpRequest *r = dynamic_cast<const HttpRequest*>(oldHead)) {
-            newHead = new HttpRequest(r->masterXaction);
+        HttpMsg::Pointer newHead;
+        if (dynamic_cast<const HttpRequest*>(oldHead)) {
+            newHead = new HttpRequest;
         } else if (dynamic_cast<const HttpReply*>(oldHead)) {
             newHead = new HttpReply;
         }
-        Must(newHead);
+        Must(newHead != NULL);
 
         newHead->inheritProperties(oldHead);
 
@@ -986,8 +974,11 @@ void Adaptation::Icap::ModXact::prepEchoing()
     // parse the buffer back
     Http::StatusCode error = Http::scNone;
 
-    httpBuf.terminate(); // Http::Message::parse requires nil-terminated buffer
-    Must(adapted.header->parse(httpBuf.content(), httpBuf.contentSize(), true, &error));
+    Must(adapted.header->parse(&httpBuf, true, &error));
+
+    if (HttpRequest *r = dynamic_cast<HttpRequest*>(adapted.header))
+        urlCanonical(r); // parse does not set HttpRequest::canonical
+
     Must(adapted.header->hdr_sz == httpBuf.contentSize()); // no leftovers
 
     httpBuf.clean();
@@ -1050,7 +1041,7 @@ void Adaptation::Icap::ModXact::prepPartialBodyEchoing(uint64_t pos)
 
 void Adaptation::Icap::ModXact::handleUnknownScode()
 {
-    stopParsing(false);
+    stopParsing();
     stopBackup();
     // TODO: mark connection as "bad"
 
@@ -1060,7 +1051,7 @@ void Adaptation::Icap::ModXact::handleUnknownScode()
 
 void Adaptation::Icap::ModXact::parseHttpHead()
 {
-    if (expectHttpHeader()) {
+    if (gotEncapsulated("res-hdr") || gotEncapsulated("req-hdr")) {
         replyHttpHeaderSize = 0;
         maybeAllocateHttpMsg();
 
@@ -1080,79 +1071,102 @@ void Adaptation::Icap::ModXact::parseHttpHead()
         }
 
         // Maybe adapted.header==NULL if HttpReply and have Http 0.9 ....
-        if (adapted.header)
+        if (adapted.header) {
             adapted.header->inheritProperties(virgin.header);
+            if (status_msg.size()) {
+                //Add cookie indicating ICAP error reason
+                adapted.header->status_msg=std::move(this->status_msg);
+            }
+        };
     }
 
     decideOnParsingBody();
 }
 
-template<class Part>
-bool Adaptation::Icap::ModXact::parsePart(Part *part, const char *description)
-{
-    Must(part);
-    debugs(93, 5, "have " << readBuf.length() << ' ' << description << " bytes to parse; state: " << state.parsing);
-    Http::StatusCode error = Http::scNone;
-    // XXX: performance regression. c_str() data copies
-    // XXX: Http::Message::parse requires a terminated string buffer
-    const char *tmpBuf = readBuf.c_str();
-    const bool parsed = part->parse(tmpBuf, readBuf.length(), commEof, &error);
-    debugs(93, (!parsed && error) ? 2 : 5, description << " parsing result: " << parsed << " detail: " << error);
-    Must(parsed || !error);
-    if (parsed)
-        readBuf.consume(part->hdr_sz);
-    return parsed;
-}
-
 // parses both HTTP and ICAP headers
-bool
-Adaptation::Icap::ModXact::parseHead(Http::Message *head)
+bool Adaptation::Icap::ModXact::parseHead(HttpMsg *head)
 {
-    if (!parsePart(head, "head")) {
+    Must(head);
+    debugs(93, 5, HERE << "have " << readBuf.contentSize() << " head bytes to parse" <<
+           "; state: " << state.parsing);
+
+    Http::StatusCode error = Http::scNone;
+    const bool parsed = head->parse(&readBuf, commEof, &error);
+    Must(parsed || !error); // success or need more data
+
+    if (!parsed) { // need more data
+        debugs(93, 5, HERE << "parse failed, need more data, return false");
         head->reset();
         return false;
     }
+
+    if (HttpRequest *r = dynamic_cast<HttpRequest*>(head))
+        urlCanonical(r); // parse does not set HttpRequest::canonical
+
+    debugs(93, 5, HERE << "parse success, consume " << head->hdr_sz << " bytes, return true");
+    readBuf.consume(head->hdr_sz);
+
+    // Has this page been blocked?
+    std::string reason_msg{"Not specified"};
+    BlockReason Reason={};
+
+    if(head->header.getByName("X-PD-Blocked").size()){
+        if('1' == head->header.getByName("X-PD-Blocked")[0]){
+            char blockKeyWords[512];
+            memset(blockKeyWords, 0, 512);
+    
+            if(head->header.getByName("X-PD-Keyword").size()){
+                strcpy(blockKeyWords, head->header.getByName("X-PD-Keyword").termedBuf());
+            }
+
+#undef sprintf
+            if(head->header.getByName("X-PD-DCR-Score").size()){
+    
+                /* REASON: MAJ_REASON_PAGE_CONTENT */
+                Reason.major = MAJ_REASON_PAGE_CONTENT;
+                if (!tx_safe_atoui(head->header.getByName("X-PD-DCR-Score").termedBuf(),&Reason.minor.score))  Reason.minor.score =0;
+    
+                if(head->header.getByName("X-PD-Threshold").size()){
+                   reason_msg=std::string{"Page content filters applied - score = "+std::to_string(Reason.minor.score)+" (keywords:"+blockKeyWords+")"};
+                }
+                else if(head->header.getByName("X-PD-PageThreshold").size()){
+                    Reason.aux.threshold = atoi(head->header.getByName("X-PD-PageThreshold").termedBuf());
+                    reason_msg=std::string{"Page size filter applied - page content size "+std::to_string(Reason.minor.score)+" exceeds threshold "+std::to_string(Reason.aux.threshold)};
+                }
+            }
+
+            if(head->header.getByName("X-PD-BlockedOutright").size()){
+                /* REASON: MAJ_REASON_PAGE_KEYWORD */
+               reason_msg=std::string{"Page content filters applied - banned keyword("+std::string{blockKeyWords}+"}"};
+                Reason.major = MAJ_REASON_PAGE_KEYWORD;
+
+            }
+
+            if(head->header.getByName("X-PD-InfectedWith").size()){
+                /* REASON: MAJ_REASON_VIRUS  */
+                Reason.major = MAJ_REASON_VIRUS;
+               reason_msg=std::string{"A virus("+std::string{head->header.getByName("X-PD-InfectedWith").termedBuf()}+") was found in the downloaded file"};
+            }
+
+            status_msg=std::move(reason_msg);
+        }
+    }
+
     return true;
-}
-
-bool Adaptation::Icap::ModXact::expectHttpHeader() const
-{
-    return gotEncapsulated("res-hdr") || gotEncapsulated("req-hdr");
-}
-
-bool Adaptation::Icap::ModXact::expectHttpBody() const
-{
-    return gotEncapsulated("res-body") || gotEncapsulated("req-body");
-}
-
-bool Adaptation::Icap::ModXact::expectIcapTrailers() const
-{
-    String trailers;
-    const bool promisesToSendTrailer = icapReply->header.getByIdIfPresent(Http::HdrType::TRAILER, &trailers);
-    const bool supportsTrailers = icapReply->header.hasListMember(Http::HdrType::ALLOW, "trailers", ',');
-    // ICAP Trailer specs require us to reject transactions having either Trailer
-    // header or Allow:trailers
-    Must((promisesToSendTrailer == supportsTrailers) || (!promisesToSendTrailer && supportsTrailers));
-    if (promisesToSendTrailer && !trailers.size())
-        debugs(93, DBG_IMPORTANT, "ERROR: ICAP Trailer response header field must not be empty (salvaged)");
-    return promisesToSendTrailer;
 }
 
 void Adaptation::Icap::ModXact::decideOnParsingBody()
 {
-    if (expectHttpBody()) {
+    if (gotEncapsulated("res-body") || gotEncapsulated("req-body")) {
         debugs(93, 5, HERE << "expecting a body");
         state.parsing = State::psBody;
         replyHttpBodySize = 0;
-        bodyParser = new Http1::TeChunkedParser;
+        bodyParser = new ChunkedCodingParser;
         makeAdaptedBodyPipe("adapted response from the ICAP server");
         Must(state.sending == State::sendingAdapted);
     } else {
         debugs(93, 5, HERE << "not expecting a body");
-        if (trailerParser)
-            state.parsing = State::psIcapTrailer;
-        else
-            stopParsing();
+        stopParsing();
         stopSending(true);
     }
 }
@@ -1162,16 +1176,15 @@ void Adaptation::Icap::ModXact::parseBody()
     Must(state.parsing == State::psBody);
     Must(bodyParser);
 
-    debugs(93, 5, "have " << readBuf.length() << " body bytes to parse");
+    debugs(93, 5, HERE << "have " << readBuf.contentSize() << " body bytes to parse");
 
     // the parser will throw on errors
     BodyPipeCheckout bpc(*adapted.body_pipe);
-    bodyParser->setPayloadBuffer(&bpc.buf);
-    const bool parsed = bodyParser->parse(readBuf);
-    readBuf = bodyParser->remaining(); // sync buffers after parse
+    const bool parsed = bodyParser->parse(&readBuf, &bpc.buf);
     bpc.checkIn();
 
-    debugs(93, 5, "have " << readBuf.length() << " body bytes after parsed all: " << parsed);
+    debugs(93, 5, HERE << "have " << readBuf.contentSize() << " body bytes after " <<
+           "parse; parsed all: " << parsed);
     replyHttpBodySize += adapted.body_pipe->buf().contentSize();
 
     // TODO: expose BodyPipe::putSize() to make this check simpler and clearer
@@ -1182,14 +1195,15 @@ void Adaptation::Icap::ModXact::parseBody()
     }
 
     if (parsed) {
-        if (state.readyForUob && bodyParser->useOriginBody >= 0)
-            prepPartialBodyEchoing(static_cast<uint64_t>(bodyParser->useOriginBody));
-        else
-            stopSending(true); // the parser succeeds only if all parsed data fits
-        if (trailerParser)
-            state.parsing = State::psIcapTrailer;
-        else
+        if (state.readyForUob && bodyParser->useOriginBody >= 0) {
+            prepPartialBodyEchoing(
+                static_cast<uint64_t>(bodyParser->useOriginBody));
             stopParsing();
+            return;
+        }
+
+        stopParsing();
+        stopSending(true); // the parser succeeds only if all parsed data fits
         return;
     }
 
@@ -1209,21 +1223,16 @@ void Adaptation::Icap::ModXact::parseBody()
     }
 }
 
-void Adaptation::Icap::ModXact::stopParsing(const bool checkUnparsedData)
+void Adaptation::Icap::ModXact::stopParsing()
 {
     if (state.parsing == State::psDone)
         return;
 
-    if (checkUnparsedData)
-        Must(readBuf.isEmpty());
-
-    debugs(93, 7, "will no longer parse" << status());
+    debugs(93, 7, HERE << "will no longer parse" << status());
 
     delete bodyParser;
-    bodyParser = nullptr;
 
-    delete trailerParser;
-    trailerParser = nullptr;
+    bodyParser = NULL;
 
     state.parsing = State::psDone;
 }
@@ -1284,7 +1293,6 @@ void Adaptation::Icap::ModXact::noteBodyConsumerAborted(BodyPipe::Pointer)
 Adaptation::Icap::ModXact::~ModXact()
 {
     delete bodyParser;
-    delete trailerParser;
 }
 
 // internal cleanup
@@ -1310,8 +1318,8 @@ void prepareLogWithRequestDetails(HttpRequest *, AccessLogEntry::Pointer &);
 
 void Adaptation::Icap::ModXact::finalizeLogInfo()
 {
-    HttpRequest *adapted_request_ = nullptr;
-    HttpReply *adapted_reply_ = nullptr;
+    HttpRequest *adapted_request_ = NULL;
+    HttpReply *adapted_reply_ = NULL;
     HttpRequest *virgin_request_ = const_cast<HttpRequest*>(&virginRequest());
     if (!(adapted_request_ = dynamic_cast<HttpRequest*>(adapted.header))) {
         // if the request was not adapted, use virgin request to simplify
@@ -1348,36 +1356,42 @@ void Adaptation::Icap::ModXact::finalizeLogInfo()
         al.cache.ssluser = h->ssluser.termedBuf();
 #endif
     al.cache.code = h->logType;
-
-    const Http::Message *virgin_msg = dynamic_cast<HttpReply*>(virgin.header);
+    
+    const HttpMsg *virgin_msg = dynamic_cast<HttpReply*>(virgin.header);
     if (!virgin_msg)
-        virgin_msg = virgin_request_;
+	virgin_msg = virgin_request_;
     assert(virgin_msg != virgin.cause);
     al.http.clientRequestSz.header = virgin_msg->hdr_sz;
     if (virgin_msg->body_pipe != NULL)
-        al.http.clientRequestSz.payloadData = virgin_msg->body_pipe->producedSize();
+	al.http.clientRequestSz.payloadData = virgin_msg->body_pipe->producedSize();
 
     // leave al.icap.bodyBytesRead negative if no body
     if (replyHttpHeaderSize >= 0 || replyHttpBodySize >= 0) {
         const int64_t zero = 0; // to make max() argument types the same
-        const uint64_t headerSize = max(zero, replyHttpHeaderSize);
-        const uint64_t bodySize =  max(zero, replyHttpBodySize);
-        al.icap.bodyBytesRead = headerSize + bodySize;
-        al.http.clientReplySz.header = headerSize;
-        al.http.clientReplySz.payloadData = bodySize;
+	const uint64_t headerSize = max(zero, replyHttpHeaderSize);
+	const uint64_t bodySize =  max(zero, replyHttpBodySize);
+	al.icap.bodyBytesRead = headerSize + bodySize;
+	al.http.clientReplySz.header = headerSize;
+	al.http.clientReplySz.payloadData = bodySize;
     }
 
     if (adapted_reply_) {
-        al.http.code = adapted_reply_->sline.status();
-        al.http.content_type = adapted_reply_->content_type.termedBuf();
-        if (replyHttpBodySize >= 0)
+	al.http.code = adapted_reply_->sline.status();
+	al.http.content_type = adapted_reply_->content_type.termedBuf();
+	if (replyHttpBodySize >= 0)    
             al.cache.highOffset = replyHttpBodySize;
         //don't set al.cache.objectSize because it hasn't exist yet
 
+        Packer p;
         MemBuf mb;
+
         mb.init();
-        adapted_reply_->header.packInto(&mb);
+        packerToMemInit(&p, &mb);
+
+        adapted_reply_->header.packInto(&p);
         al.headers.reply = xstrdup(mb.buf);
+
+        packerClean(&p);
         mb.clean();
     }
     prepareLogWithRequestDetails(adapted_request_, alep);
@@ -1391,34 +1405,31 @@ void Adaptation::Icap::ModXact::makeRequestHeaders(MemBuf &buf)
      * XXX These should use HttpHdr interfaces instead of Printfs
      */
     const Adaptation::ServiceConfig &s = service().cfg();
-    buf.appendf("%s " SQUIDSTRINGPH " ICAP/1.0\r\n", s.methodStr(), SQUIDSTRINGPRINT(s.uri));
-    buf.appendf("Host: " SQUIDSTRINGPH ":%d\r\n", SQUIDSTRINGPRINT(s.host), s.port);
-    buf.appendf("Date: %s\r\n", mkrfc1123(squid_curtime));
+    buf.Printf("%s " SQUIDSTRINGPH " ICAP/1.0\r\n", s.methodStr(), SQUIDSTRINGPRINT(s.uri));
+    buf.Printf("Host: " SQUIDSTRINGPH ":%d\r\n", SQUIDSTRINGPRINT(s.host), s.port);
+    buf.Printf("Date: %s\r\n", mkrfc1123(squid_curtime));
 
     if (!TheConfig.reuse_connections)
-        buf.appendf("Connection: close\r\n");
+        buf.Printf("Connection: close\r\n");
 
     const HttpRequest *request = &virginRequest();
 
     // we must forward "Proxy-Authenticate" and "Proxy-Authorization"
     // as ICAP headers.
-    if (virgin.header->header.has(Http::HdrType::PROXY_AUTHENTICATE)) {
-        String vh=virgin.header->header.getById(Http::HdrType::PROXY_AUTHENTICATE);
-        buf.appendf("Proxy-Authenticate: " SQUIDSTRINGPH "\r\n",SQUIDSTRINGPRINT(vh));
+    if (virgin.header->header.has(HDR_PROXY_AUTHENTICATE)) {
+        String vh=virgin.header->header.getByName("Proxy-Authenticate");
+        buf.Printf("Proxy-Authenticate: " SQUIDSTRINGPH "\r\n",SQUIDSTRINGPRINT(vh));
     }
 
-    if (virgin.header->header.has(Http::HdrType::PROXY_AUTHORIZATION)) {
-        String vh=virgin.header->header.getById(Http::HdrType::PROXY_AUTHORIZATION);
-        buf.appendf("Proxy-Authorization: " SQUIDSTRINGPH "\r\n", SQUIDSTRINGPRINT(vh));
+    if (virgin.header->header.has(HDR_PROXY_AUTHORIZATION)) {
+        String vh=virgin.header->header.getByName("Proxy-Authorization");
+        buf.Printf("Proxy-Authorization: " SQUIDSTRINGPH "\r\n", SQUIDSTRINGPRINT(vh));
     } else if (request->extacl_user.size() > 0 && request->extacl_passwd.size() > 0) {
-        struct base64_encode_ctx ctx;
-        base64_encode_init(&ctx);
-        char base64buf[base64_encode_len(MAX_LOGIN_SZ)];
-        size_t resultLen = base64_encode_update(&ctx, base64buf, request->extacl_user.size(), reinterpret_cast<const uint8_t*>(request->extacl_user.rawBuf()));
-        resultLen += base64_encode_update(&ctx, base64buf+resultLen, 1, reinterpret_cast<const uint8_t*>(":"));
-        resultLen += base64_encode_update(&ctx, base64buf+resultLen, request->extacl_passwd.size(), reinterpret_cast<const uint8_t*>(request->extacl_passwd.rawBuf()));
-        resultLen += base64_encode_final(&ctx, base64buf+resultLen);
-        buf.appendf("Proxy-Authorization: Basic %.*s\r\n", (int)resultLen, base64buf);
+        char loginbuf[256];
+        snprintf(loginbuf, sizeof(loginbuf), SQUIDSTRINGPH ":" SQUIDSTRINGPH,
+                 SQUIDSTRINGPRINT(request->extacl_user),
+                 SQUIDSTRINGPRINT(request->extacl_passwd));
+        buf.Printf("Proxy-Authorization: Basic %s\r\n", old_base64_encode(loginbuf));
     }
 
     // share the cross-transactional database records if needed
@@ -1427,12 +1438,13 @@ void Adaptation::Icap::ModXact::makeRequestHeaders(MemBuf &buf)
         if (ah != NULL) {
             String name, value;
             if (ah->getXxRecord(name, value)) {
-                buf.appendf(SQUIDSTRINGPH ": " SQUIDSTRINGPH "\r\n", SQUIDSTRINGPRINT(name), SQUIDSTRINGPRINT(value));
+                buf.Printf(SQUIDSTRINGPH ": " SQUIDSTRINGPH "\r\n",
+                           SQUIDSTRINGPRINT(name), SQUIDSTRINGPRINT(value));
             }
         }
     }
 
-    buf.append("Encapsulated: ", 14);
+    buf.Printf("Encapsulated: ");
 
     MemBuf httpBuf;
 
@@ -1443,7 +1455,9 @@ void Adaptation::Icap::ModXact::makeRequestHeaders(MemBuf &buf)
 
     // to simplify, we could assume that request is always available
 
+    String urlPath;
     if (request) {
+        urlPath = request->urlpath;
         if (ICAP::methodRespmod == m)
             encapsulateHead(buf, "req-hdr", httpBuf, request);
         else if (ICAP::methodReqmod == m)
@@ -1451,20 +1465,20 @@ void Adaptation::Icap::ModXact::makeRequestHeaders(MemBuf &buf)
     }
 
     if (ICAP::methodRespmod == m)
-        if (const Http::Message *prime = virgin.header)
+        if (const HttpMsg *prime = virgin.header)
             encapsulateHead(buf, "res-hdr", httpBuf, prime);
 
     if (!virginBody.expected())
-        buf.appendf("null-body=%d", (int) httpBuf.contentSize());
+        buf.Printf("null-body=%d", (int) httpBuf.contentSize());
     else if (ICAP::methodReqmod == m)
-        buf.appendf("req-body=%d", (int) httpBuf.contentSize());
+        buf.Printf("req-body=%d", (int) httpBuf.contentSize());
     else
-        buf.appendf("res-body=%d", (int) httpBuf.contentSize());
+        buf.Printf("res-body=%d", (int) httpBuf.contentSize());
 
     buf.append(ICAP::crlf, 2); // terminate Encapsulated line
 
     if (preview.enabled()) {
-        buf.appendf("Preview: %d\r\n", (int)preview.ad());
+        buf.Printf("Preview: %d\r\n", (int)preview.ad());
         if (!virginBody.expected()) // there is no body to preview
             finishNullOrEmptyBodyPreview(httpBuf);
     }
@@ -1480,37 +1494,65 @@ void Adaptation::Icap::ModXact::makeRequestHeaders(MemBuf &buf)
 #endif
             client_addr = request->client_addr;
         if (!client_addr.isAnyAddr() && !client_addr.isNoAddr())
-            buf.appendf("X-Client-IP: %s\r\n", client_addr.toStr(ntoabuf,MAX_IPSTRLEN));
+            buf.Printf("X-Client-IP: %s\r\n", client_addr.toStr(ntoabuf,MAX_IPSTRLEN));
     }
 
     if (TheConfig.send_username && request)
         makeUsernameHeader(request, buf);
 
     // Adaptation::Config::metaHeaders
-    for (auto h: Adaptation::Config::metaHeaders) {
+    typedef Notes::iterator ACAMLI;
+    for (ACAMLI i = Adaptation::Config::metaHeaders.begin(); i != Adaptation::Config::metaHeaders.end(); ++i) {
         HttpRequest *r = virgin.cause ?
                          virgin.cause : dynamic_cast<HttpRequest*>(virgin.header);
         Must(r);
 
         HttpReply *reply = dynamic_cast<HttpReply*>(virgin.header);
 
-        SBuf matched;
-        if (h->match(r, reply, alMaster, matched)) {
-            buf.append(h->key().rawContent(), h->key().length());
-            buf.append(": ", 2);
-            buf.append(matched.rawContent(), matched.length());
-            buf.append("\r\n", 2);
+        if (const char *value = (*i)->match(r, reply, alMaster)) {
+            buf.Printf("%s: %s\r\n", (*i)->key.termedBuf(), value);
             Adaptation::History::Pointer ah = request->adaptHistory(false);
             if (ah != NULL) {
                 if (ah->metaHeaders == NULL)
                     ah->metaHeaders = new NotePairs;
-                if (!ah->metaHeaders->hasPair(h->key(), matched))
-                    ah->metaHeaders->add(h->key(), matched);
+                if (!ah->metaHeaders->hasPair((*i)->key.termedBuf(), value))
+                    ah->metaHeaders->add((*i)->key.termedBuf(), value);
             }
         }
     }
 
-    // fprintf(stderr, "%s\n", buf.content());
+    // Titax.
+    const IHRequest* _rq = request;
+    buf.Printf("X-PD-Explicitly-Allowed: %s\r\n",
+            (const_cast<IHRequest*>(_rq))->get_flags().ttn_explicitly_allowed ? "yes" : "no");
+
+    buf.Printf("X-PD-User:%s\r\n", _rq->ttag.identity.eph.user->name);
+    buf.Printf("X-PD-LogUser: %s\r\n", _rq->ttag.identity.eph.user->name);
+
+    buf.Printf("X-PD-Categorised: %s\r\n", _rq->ttag.category_get() ? "yes" : "no");
+
+    // add the list to the header
+    if(_rq->ttag.identity.eph.user->policy_info.policies.length){
+        int i=0;
+
+        // there must always be a first one, we just checked the count
+        buf.Printf ("X-PD-Groups: %zu %d", _rq->ttag.identity.eph.user->policy_info.policies.length,
+                                          _rq->ttag.identity.eph.user->policy_info.policies.ids[0]);
+
+        // now the rest get preceded by a ,
+        for(i=1;i<_rq->ttag.identity.eph.user->policy_info.policies.length;i++){
+            // output the group number
+            buf.Printf (",%d", _rq->ttag.identity.eph.user->policy_info.policies.ids[i]);
+        }
+        // and finally the end of line stuff
+        buf.Printf ("\r\n");
+    }
+    else{
+        // we don't actually have a list so force the default group
+        buf.Printf ("X-PD-Groups: 0\r\n");
+    }
+
+    buf.Printf("X-PD-URL: %s\r\n", request->canonical);
 
     buf.append(ICAP::crlf, 2); // terminate ICAP header
 
@@ -1530,15 +1572,14 @@ void Adaptation::Icap::ModXact::makeAllowHeader(MemBuf &buf)
     const bool allow204out = state.allowedPostview204 = shouldAllow204();
     const bool allow206in = state.allowedPreview206 = shouldAllow206in();
     const bool allow206out = state.allowedPostview206 = shouldAllow206out();
-    const bool allowTrailers = true; // TODO: make configurable
 
-    debugs(93, 9, "Allows: " << allow204in << allow204out <<
-           allow206in << allow206out << allowTrailers);
+    debugs(93,9, HERE << "Allows: " << allow204in << allow204out <<
+           allow206in << allow206out);
 
     const bool allow204 = allow204in || allow204out;
     const bool allow206 = allow206in || allow206out;
 
-    if (!allow204 && !allow206 && !allowTrailers)
+    if (!allow204 && !allow206)
         return; // nothing to do
 
     if (virginBody.expected()) // if there is a virgin body, plan to send it
@@ -1548,57 +1589,48 @@ void Adaptation::Icap::ModXact::makeAllowHeader(MemBuf &buf)
     // writing Allow/204     means we will honor 204 outside preview
     // writing Allow:206     means we will honor 206 inside preview
     // writing Allow:204,206 means we will honor 206 outside preview
-    if (allow204 || allow206 || allowTrailers) {
-        buf.appendf("Allow: ");
-        if (allow204out)
-            buf.appendf("204, ");
-        if (allow206)
-            buf.appendf("206, ");
-        if (allowTrailers)
-            buf.appendf("trailers");
-        buf.appendf("\r\n");
+    const char *allowHeader = NULL;
+    if (allow204out && allow206)
+        allowHeader = "Allow: 204, 206\r\n";
+    else if (allow204out)
+        allowHeader = "Allow: 204\r\n";
+    else if (allow206)
+        allowHeader = "Allow: 206\r\n";
+
+    if (allowHeader) { // may be nil if only allow204in is true
+        buf.append(allowHeader, strlen(allowHeader));
+        debugs(93,5, HERE << "Will write " << allowHeader);
     }
 }
 
 void Adaptation::Icap::ModXact::makeUsernameHeader(const HttpRequest *request, MemBuf &buf)
 {
 #if USE_AUTH
-    struct base64_encode_ctx ctx;
-    base64_encode_init(&ctx);
-
-    const char *value = NULL;
     if (request->auth_user_request != NULL) {
-        value = request->auth_user_request->username();
+        char const *name = request->auth_user_request->username();
+        if (name) {
+            const char *value = TheConfig.client_username_encode ? old_base64_encode(name) : name;
+            buf.Printf("%s: %s\r\n", TheConfig.client_username_header, value);
+        }
     } else if (request->extacl_user.size() > 0) {
-        value = request->extacl_user.termedBuf();
-    }
-
-    if (value) {
-        if (TheConfig.client_username_encode) {
-            char base64buf[base64_encode_len(MAX_LOGIN_SZ)];
-            size_t resultLen = base64_encode_update(&ctx, base64buf, strlen(value), reinterpret_cast<const uint8_t*>(value));
-            resultLen += base64_encode_final(&ctx, base64buf+resultLen);
-            buf.appendf("%s: %.*s\r\n", TheConfig.client_username_header, (int)resultLen, base64buf);
-        } else
-            buf.appendf("%s: %s\r\n", TheConfig.client_username_header, value);
+        const char *value = TheConfig.client_username_encode ? old_base64_encode(request->extacl_user.termedBuf()) : request->extacl_user.termedBuf();
+        buf.Printf("%s: %s\r\n", TheConfig.client_username_header, value);
     }
 #endif
 }
 
-void
-Adaptation::Icap::ModXact::encapsulateHead(MemBuf &icapBuf, const char *section, MemBuf &httpBuf, const Http::Message *head)
+void Adaptation::Icap::ModXact::encapsulateHead(MemBuf &icapBuf, const char *section, MemBuf &httpBuf, const HttpMsg *head)
 {
     // update ICAP header
-    icapBuf.appendf("%s=%d, ", section, (int) httpBuf.contentSize());
+    icapBuf.Printf("%s=%d, ", section, (int) httpBuf.contentSize());
 
     // begin cloning
-    Http::MessagePointer headClone;
+    HttpMsg::Pointer headClone;
 
     if (const HttpRequest* old_request = dynamic_cast<const HttpRequest*>(head)) {
-        HttpRequest::Pointer new_request(new HttpRequest(old_request->masterXaction));
-        // copy the request-line details
-        new_request->method = old_request->method;
-        new_request->url = old_request->url;
+        HttpRequest::Pointer new_request(new HttpRequest);
+        Must(old_request->canonical);
+        urlParse(old_request->method, old_request->canonical, new_request.getRaw());
         new_request->http_ver = old_request->http_ver;
         headClone = new_request.getRaw();
     } else if (const HttpReply *old_reply = dynamic_cast<const HttpReply*>(head)) {
@@ -1606,17 +1638,18 @@ Adaptation::Icap::ModXact::encapsulateHead(MemBuf &icapBuf, const char *section,
         new_reply->sline = old_reply->sline;
         headClone = new_reply.getRaw();
     }
-    Must(headClone);
+    Must(headClone != NULL);
     headClone->inheritProperties(head);
 
     HttpHeaderPos pos = HttpHeaderInitPos;
-    while (HttpHeaderEntry* p_head_entry = head->header.getEntry(&pos))
+    HttpHeaderEntry* p_head_entry = NULL;
+    while (NULL != (p_head_entry = head->header.getEntry(&pos)) )
         headClone->header.addEntry(p_head_entry->clone());
 
     // end cloning
 
     // remove all hop-by-hop headers from the clone
-    headClone->header.delById(Http::HdrType::PROXY_AUTHENTICATE);
+    headClone->header.delById(HDR_PROXY_AUTHENTICATE);
     headClone->header.removeHopByHopEntries();
 
     // pack polished HTTP header
@@ -1625,10 +1658,12 @@ Adaptation::Icap::ModXact::encapsulateHead(MemBuf &icapBuf, const char *section,
     // headClone unlocks and, hence, deletes the message we packed
 }
 
-void
-Adaptation::Icap::ModXact::packHead(MemBuf &httpBuf, const Http::Message *head)
+void Adaptation::Icap::ModXact::packHead(MemBuf &httpBuf, const HttpMsg *head)
 {
-    head->packInto(&httpBuf, true);
+    Packer p;
+    packerToMemInit(&p, &httpBuf);
+    head->packInto(&p, true);
+    packerClean(&p);
 }
 
 // decides whether to offer a preview and calculates its size
@@ -1639,10 +1674,10 @@ void Adaptation::Icap::ModXact::decideOnPreview()
         return;
     }
 
-    const SBuf urlPath(virginRequest().url.path());
+    const String urlPath = virginRequest().urlpath;
     size_t wantedSize;
     if (!service().wantsPreview(urlPath, wantedSize)) {
-        debugs(93, 5, "should not offer preview for " << urlPath);
+        debugs(93, 5, HERE << "should not offer preview for " << urlPath);
         return;
     }
 
@@ -1729,7 +1764,7 @@ void Adaptation::Icap::ModXact::decideOnRetries()
 // structures were initialized. This is not the case when there is no body
 // or the body is known to be empty, because the virgin message will lack a
 // body_pipe. So we handle preview of null-body and zero-size bodies here.
-void Adaptation::Icap::ModXact::finishNullOrEmptyBodyPreview(MemBuf &)
+void Adaptation::Icap::ModXact::finishNullOrEmptyBodyPreview(MemBuf &buf)
 {
     Must(!virginBodyWriting.active()); // one reason we handle it here
     Must(!virgin.body_pipe);          // another reason we handle it here
@@ -1757,21 +1792,21 @@ void Adaptation::Icap::ModXact::fillPendingStatus(MemBuf &buf) const
         buf.append("r", 1);
 
     if (!state.doneWriting() && state.writing != State::writingInit)
-        buf.appendf("w(%d)", state.writing);
+        buf.Printf("w(%d)", state.writing);
 
     if (preview.enabled()) {
         if (!preview.done())
-            buf.appendf("P(%d)", (int) preview.debt());
+            buf.Printf("P(%d)", (int) preview.debt());
     }
 
     if (virginBodySending.active())
         buf.append("B", 1);
 
     if (!state.doneParsing() && state.parsing != State::psIcapHeader)
-        buf.appendf("p(%d)", state.parsing);
+        buf.Printf("p(%d)", state.parsing);
 
     if (!doneSending() && state.sending != State::sendingUndecided)
-        buf.appendf("S(%d)", state.sending);
+        buf.Printf("S(%d)", state.sending);
 
     if (state.readyForUob)
         buf.append("6", 1);
@@ -1795,7 +1830,7 @@ void Adaptation::Icap::ModXact::fillDoneStatus(MemBuf &buf) const
 
     if (preview.enabled()) {
         if (preview.done())
-            buf.appendf("P%s", preview.ieof() ? "(ieof)" : "");
+            buf.Printf("P%s", preview.ieof() ? "(ieof)" : "");
     }
 
     if (doneReading())
@@ -1821,7 +1856,7 @@ void Adaptation::Icap::ModXact::estimateVirginBody()
 {
     // note: lack of size info may disable previews and 204s
 
-    Http::Message *msg = virgin.header;
+    HttpMsg *msg = virgin.header;
     Must(msg);
 
     HttpRequestMethod method;
@@ -2013,15 +2048,9 @@ void Adaptation::Icap::ModXact::clearError()
         request->clearError();
 }
 
-void Adaptation::Icap::ModXact::updateSources()
-{
-    Must(adapted.header);
-    adapted.header->sources |= (service().cfg().connectionEncryption ? Http::Message::srcIcaps : Http::Message::srcIcap);
-}
-
 /* Adaptation::Icap::ModXactLauncher */
 
-Adaptation::Icap::ModXactLauncher::ModXactLauncher(Http::Message *virginHeader, HttpRequest *virginCause, AccessLogEntry::Pointer &alp, Adaptation::ServicePointer aService):
+Adaptation::Icap::ModXactLauncher::ModXactLauncher(HttpMsg *virginHeader, HttpRequest *virginCause, AccessLogEntry::Pointer &alp, Adaptation::ServicePointer aService):
     AsyncJob("Adaptation::Icap::ModXactLauncher"),
     Adaptation::Icap::Launcher("Adaptation::Icap::ModXactLauncher", aService),
     al(alp)
@@ -2061,16 +2090,5 @@ void Adaptation::Icap::ModXactLauncher::updateHistory(bool doStart)
                 h->stop("ICAPModXactLauncher");
         }
     }
-}
-
-bool Adaptation::Icap::TrailerParser::parse(const char *buf, int len, int atEnd, Http::StatusCode *error) {
-    Http::ContentLengthInterpreter clen;
-    // RFC 7230 section 4.1.2: MUST NOT generate a trailer that contains
-    // a field necessary for message framing (e.g., Transfer-Encoding and Content-Length)
-    clen.applyTrailerRules();
-    const int parsed = trailer.parse(buf, len, atEnd, hdr_sz, clen);
-    if (parsed < 0)
-        *error = Http::scInvalidHeader; // TODO: should we add a new Http::scInvalidTrailer?
-    return parsed > 0;
 }
 

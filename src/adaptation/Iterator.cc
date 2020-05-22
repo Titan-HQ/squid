@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -16,11 +16,12 @@
 #include "adaptation/ServiceFilter.h"
 #include "adaptation/ServiceGroups.h"
 #include "base/TextException.h"
+#include "HttpMsg.h"
 #include "HttpReply.h"
-#include "sbuf/StringConvert.h"
+#include "HttpRequest.h"
 
 Adaptation::Iterator::Iterator(
-    Http::Message *aMsg, HttpRequest *aCause,
+    HttpMsg *aMsg, HttpRequest *aCause,
     AccessLogEntry::Pointer &alp,
     const ServiceGroupPointer &aGroup):
     AsyncJob("Iterator"),
@@ -61,7 +62,7 @@ void Adaptation::Iterator::start()
             request = theCause;
         Must(request);
         Adaptation::History::Pointer ah = request->adaptHistory(true);
-        auto gid = StringToSBuf(theGroup->id);
+        SBuf gid(theGroup->id);
         ah->recordAdaptationService(gid);
     }
 
@@ -101,7 +102,7 @@ void Adaptation::Iterator::step()
 
     if (Adaptation::Config::needHistory) {
         Adaptation::History::Pointer ah = request->adaptHistory(true);
-        auto uid = StringToSBuf(thePlan.current()->cfg().key);
+        SBuf uid(thePlan.current()->cfg().key);
         ah->recordAdaptationService(uid);
     }
 
@@ -116,7 +117,7 @@ Adaptation::Iterator::noteAdaptationAnswer(const Answer &answer)
 {
     switch (answer.kind) {
     case Answer::akForward:
-        handleAdaptedHeader(const_cast<Http::Message*>(answer.message.getRaw()));
+        handleAdaptedHeader(const_cast<HttpMsg*>(answer.message.getRaw()));
         break;
 
     case Answer::akBlock:
@@ -130,7 +131,7 @@ Adaptation::Iterator::noteAdaptationAnswer(const Answer &answer)
 }
 
 void
-Adaptation::Iterator::handleAdaptedHeader(Http::Message *aMsg)
+Adaptation::Iterator::handleAdaptedHeader(HttpMsg *aMsg)
 {
     // set theCause if we switched to request satisfaction mode
     if (!theCause) { // probably sent a request message

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -16,41 +16,14 @@
 typedef void STCB(void *, StoreIOBuffer);   /* store callback */
 
 class StoreEntry;
-class ACLFilledChecklist;
-class LogTags;
 
-/// A StoreEntry::getPublic*() caller.
 class StoreClient
 {
 
 public:
     virtual ~StoreClient () {}
 
-    // TODO: Remove? Probably added to make lookups asynchronous, but they are
-    // still blocking. A lot more is needed to support async callbacks.
-    /// Handle a StoreEntry::getPublic*() result.
-    /// A nil entry indicates a cache miss.
-    virtual void created(StoreEntry *) = 0;
-
-    /// \return LogTags (if the class logs transactions) or nil (otherwise)
-    virtual LogTags *loggingTags() = 0;
-
-protected:
-    /// configure the ACL checklist with the current transaction state
-    virtual void fillChecklist(ACLFilledChecklist &) const = 0;
-
-    /// \returns whether the caller must collapse on the given entry
-    /// Before returning true, updates common collapsing-related stats.
-    /// See also: StoreEntry::hittingRequiresCollapsing().
-    bool startCollapsingOn(const StoreEntry &, const bool doingRevalidation);
-
-    // These methods only interpret Squid configuration. Their allowances are
-    // provisional -- other factors may prevent collapsed forwarding. The first
-    // two exist primarily to distinguish two major CF cases in callers code.
-    /// whether Squid configuration allows us to become a CF initiator
-    bool mayInitiateCollapsing() const { return onCollapsingPath(); }
-    /// whether Squid configuration allows collapsing for this transaction
-    bool onCollapsingPath() const;
+    virtual void created (StoreEntry *newEntry) = 0;
 };
 
 #if USE_DELAY_POOLS
@@ -61,7 +34,6 @@ protected:
 
 class store_client
 {
-    CBDATA_CLASS(store_client);
 
 public:
     store_client(StoreEntry *);
@@ -71,7 +43,7 @@ public:
     void fail();
     void callback(ssize_t len, bool error = false);
     void doCopy (StoreEntry *e);
-    void readHeader(const char *buf, ssize_t len);
+    void readHeader(const char * const buf, const ssize_t len);
     void readBody(const char *buf, ssize_t len);
     void copy(StoreEntry *, StoreIOBuffer, STCB *, void *);
     void dumpStats(MemBuf * output, int clientNumber) const;
@@ -108,7 +80,9 @@ private:
     void scheduleMemRead();
     void scheduleRead();
     bool startSwapin();
-    bool unpackHeader(char const *buf, ssize_t len);
+    //void unpackHeader(const char * const buf,const ssize_t len);
+    //20150702:http://bazaar.launchpad.net/~squid/squid/3.5/revision/13855
+    bool unpackHeader(const char * const buf,const  ssize_t len);
 
     int type;
     bool object_ok;
@@ -125,6 +99,9 @@ public:
         STCB *callback_handler;
         void *callback_data;
     } _callback;
+
+private:
+    CBDATA_CLASS2(store_client);
 };
 
 void storeClientCopy(store_client *, StoreEntry *, StoreIOBuffer, STCB *, void *);

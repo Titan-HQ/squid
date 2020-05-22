@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -43,8 +43,7 @@ Adaptation::Icap::Options::~Options()
 // future optimization note: this method is called by ICAP ACL code at least
 // twice for each HTTP message to see if the message should be ignored. For any
 // non-ignored HTTP message, ICAP calls to check whether a preview is needed.
-Adaptation::Icap::Options::TransferKind
-Adaptation::Icap::Options::transferKind(const SBuf &urlPath) const
+Adaptation::Icap::Options::TransferKind Adaptation::Icap::Options::transferKind(const String &urlPath) const
 {
     if (theTransfers.preview.matches(urlPath))
         return xferPreview;
@@ -55,7 +54,7 @@ Adaptation::Icap::Options::transferKind(const SBuf &urlPath) const
     if (theTransfers.ignore.matches(urlPath))
         return xferIgnore;
 
-    debugs(93,7, "url " << urlPath << " matches no extensions; " <<
+    debugs(93,7, HERE << "url " << urlPath << " matches no extensions; " <<
            "using default: " << theTransfers.byDefault->name);
     return theTransfers.byDefault->kind;
 }
@@ -117,15 +116,15 @@ void Adaptation::Icap::Options::configure(const HttpReply *reply)
 
     cfgIntHeader(h, "Options-TTL", theTTL);
 
-    theTimestamp = h->getTime(Http::HdrType::DATE);
+    theTimestamp = h->getTime(HDR_DATE);
 
     if (theTimestamp < 0)
         theTimestamp = squid_curtime;
 
-    if (h->hasListMember(Http::HdrType::ALLOW, "204", ','))
+    if (h->hasListMember(HDR_ALLOW, "204", ','))
         allow204 = true;
 
-    if (h->hasListMember(Http::HdrType::ALLOW, "206", ','))
+    if (h->hasListMember(HDR_ALLOW, "206", ','))
         allow206 = true;
 
     cfgIntHeader(h, "Preview", preview);
@@ -185,24 +184,26 @@ void Adaptation::Icap::Options::TransferList::add(const char *extension)
     wordlistAdd(&extensions, extension);
 };
 
-bool Adaptation::Icap::Options::TransferList::matches(const SBuf &urlPath) const
+bool Adaptation::Icap::Options::TransferList::matches(const String &urlPath) const
 {
-    const SBuf::size_type urlLen = urlPath.length();
+    const int urlLen = urlPath.size();
     for (wordlist *e = extensions; e; e = e->next) {
         // optimize: store extension lengths
-        const size_t eLen = strlen(e->key);
+        const int eLen = strlen(e->key);
 
         // assume URL contains at least '/' before the extension
         if (eLen < urlLen) {
-            const size_t eOff = urlLen - eLen;
+            const int eOff = urlLen - eLen;
             // RFC 3507 examples imply that extensions come without leading '.'
-            if (urlPath[eOff-1] == '.' && urlPath.substr(eOff).cmp(e->key, eLen) == 0) {
-                debugs(93,7, "url " << urlPath << " matches " << name << " extension " << e->key);
+            if (urlPath[eOff-1] == '.' &&
+                    strcmp(urlPath.termedBuf() + eOff, e->key) == 0) {
+                debugs(93,7, HERE << "url " << urlPath << " matches " <<
+                       name << " extension " << e->key);
                 return true;
             }
         }
     }
-    debugs(93,8, "url " << urlPath << " matches no " << name << " extensions");
+    debugs(93,8, HERE << "url " << urlPath << " matches no " << name << " extensions");
     return false;
 }
 

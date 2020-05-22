@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -10,6 +10,7 @@
 #define _SQUID_SRC_ANYP_PROTOCOLTYPE_H
 
 #include <ostream>
+#include "TAPE.h"
 
 namespace AnyP
 {
@@ -19,29 +20,29 @@ namespace AnyP
  * This is a combined list. It is used as type-codes where needed and
  * the AnyP::ProtocolType_Str array of strings may be used for display
  */
-typedef enum {
-    PROTO_NONE = 0,
-    PROTO_HTTP,
-    PROTO_FTP,
-    PROTO_HTTPS,
-    PROTO_COAP,
-    PROTO_COAPS,
-    PROTO_GOPHER,
-    PROTO_WAIS,
-    PROTO_CACHE_OBJECT,
-    PROTO_ICP,
-#if USE_HTCP
-    PROTO_HTCP,
-#endif
-    PROTO_URN,
-    PROTO_WHOIS,
-    PROTO_ICY,
-    PROTO_TLS,
-    PROTO_SSL,
-    PROTO_AUTHORITY_FORM,
-    PROTO_UNKNOWN,
-    PROTO_MAX
-} ProtocolType;
+   
+//WARNING : if changing list of known protocols, please update manually the ProtocolType.cc file
+typedef t_proto_types ProtocolType;
+using ::PROTO_NONE;
+using ::PROTO_HTTP;
+using ::PROTO_FTP;
+using ::PROTO_HTTPS;
+using ::PROTO_COAP;
+using ::PROTO_COAPS;
+using ::PROTO_GOPHER;
+using ::PROTO_WAIS;
+using ::PROTO_CACHE_OBJECT;
+using ::PROTO_ICP;
+   #if USE_HTCP
+      using ::PROTO_HTCP,
+   #endif
+using ::PROTO_URN;
+using ::PROTO_WHOIS;
+   //PROTO_INTERNAL,
+using ::PROTO_ICY;
+using ::PROTO_DNS;
+using ::PROTO_UNKNOWN;
+using ::PROTO_MAX;
 
 extern const char *ProtocolType_str[];
 

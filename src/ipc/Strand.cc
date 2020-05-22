@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -14,7 +14,6 @@
 #include "CacheManager.h"
 #include "CollapsedForwarding.h"
 #include "comm/Connection.h"
-#include "fatal.h"
 #include "globals.h"
 #include "ipc/Kids.h"
 #include "ipc/Messages.h"
@@ -25,7 +24,8 @@
 #include "mgr/Forwarder.h"
 #include "mgr/Request.h"
 #include "mgr/Response.h"
-#if HAVE_DISKIO_MODULE_IPCIO
+#include "SwapDir.h" /* XXX: scope boundary violation */
+#if USE_DISKIO_IPCIO
 #include "DiskIO/IpcIo/IpcIoFile.h" /* XXX: scope boundary violation */
 #endif
 #if SQUID_SNMP
@@ -73,7 +73,7 @@ void Ipc::Strand::receive(const TypedMsgHdr &message)
         SharedListenJoined(SharedListenResponse(message));
         break;
 
-#if HAVE_DISKIO_MODULE_IPCIO
+#if USE_DISKIO_IPCIO
     case mtStrandSearchResponse:
         IpcIoFile::HandleOpenResponse(StrandSearchResponse(message));
         break;
@@ -81,7 +81,7 @@ void Ipc::Strand::receive(const TypedMsgHdr &message)
     case mtIpcIoNotification:
         IpcIoFile::HandleNotification(message);
         break;
-#endif /* HAVE_DISKIO_MODULE_IPCIO */
+#endif /* USE_DISKIO_IPCIO */
 
     case mtCacheMgrRequest: {
         const Mgr::Request req(message);

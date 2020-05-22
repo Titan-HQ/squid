@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -12,10 +12,10 @@
 #include "ftp/Elements.h"
 #include "HttpHdrCc.h"
 #include "HttpReply.h"
-#include "sbuf/SBuf.h"
+#include "SBuf.h"
 
 // FTP does not have a notion of a "protocol version" but we need something for
-// compatibility with the current Http::Message wrapping layer. We use version 1.1:
+// compatibility with the current HttpMsg wrapping layer. We use version 1.1:
 // * some ICAP services probably expect /1.0 or /1.1 when parsing HTTP headers;
 // * FTP commands are sent on a "persistent by default" connection, just like
 //   HTTP/1.1. Using 1.1 leads to fewer exceptions in current code shared by
@@ -27,27 +27,27 @@ Ftp::ProtocolVersion()
 }
 
 HttpReply *
-Ftp::HttpReplyWrapper(const int ftpStatus, const char *ftpReason, const Http::StatusCode httpStatus, const int64_t clen)
+Ftp::HttpReplyWrapper(const int ftpStatus, const char *const ftpReason, const Http::StatusCode httpStatus, const int64_t clen)
 {
     HttpReply *const reply = new HttpReply;
 
-    AnyP::ProtocolVersion httpVersion = Http::ProtocolVersion(
+    Http::ProtocolVersion httpVersion = Http::ProtocolVersion(
                                             Ftp::ProtocolVersion().major, Ftp::ProtocolVersion().minor);
     reply->sline.set(httpVersion, httpStatus);
 
     HttpHeader &header = reply->header;
-    header.putTime(Http::HdrType::DATE, squid_curtime);
+    header.putTime(HDR_DATE, squid_curtime);
     {
         HttpHdrCc cc;
         cc.Private(String());
         header.putCc(&cc);
     }
     if (ftpStatus > 0)
-        header.putInt(Http::HdrType::FTP_STATUS, ftpStatus);
+        header.putInt(HDR_FTP_STATUS, ftpStatus);
     if (ftpReason)
-        header.putStr(Http::HdrType::FTP_REASON, ftpReason);
+        header.putStr(HDR_FTP_REASON, ftpReason);
     if (clen >= 0)
-        header.putInt64(Http::HdrType::CONTENT_LENGTH, clen);
+        header.putInt64(HDR_CONTENT_LENGTH, clen);
     reply->hdrCacheInit();
     return reply;
 }

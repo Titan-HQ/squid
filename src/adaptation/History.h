@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -13,7 +13,7 @@
 #include "base/RefCount.h"
 #include "HttpHeader.h"
 #include "Notes.h"
-#include "sbuf/SBuf.h"
+#include "SBuf.h"
 #include "SquidString.h"
 
 namespace Adaptation
@@ -34,10 +34,10 @@ public:
     void recordXactFinish(int hid);
 
     /// dump individual xaction times to a string
-    void allLogString(const char *serviceId, SBuf &);
+    void allLogString(const char *serviceId, String &buf);
 
     /// dump xaction times, merging retried and retry times together
-    void sumLogString(const char *serviceId, SBuf &);
+    void sumLogString(const char *serviceId, String &buf);
 
     /// sets or resets a cross-transactional database record
     void updateXxRecord(const char *name, const String &value);

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -12,18 +12,22 @@
 #if USE_AUTH
 
 #include "acl/Acl.h"
+#include "acl/Checklist.h"
 #include "auth/UserRequest.h"
 
+/// \ingroup ACLAPI
 class ACLMaxUserIP : public ACL
 {
+public:
     MEMPROXY_CLASS(ACLMaxUserIP);
 
-public:
-    explicit ACLMaxUserIP(char const *theClass);
+    ACLMaxUserIP(char const *theClass);
+    ACLMaxUserIP(ACLMaxUserIP const &old);
+    ~ACLMaxUserIP();
+    ACLMaxUserIP &operator =(ACLMaxUserIP const &);
 
     virtual ACL *clone() const;
     virtual char const *typeString() const;
-    virtual const Acl::Options &options();
     virtual void parse();
     virtual int match(ACLChecklist *cl);
     virtual SBufList dump() const;
@@ -33,16 +37,19 @@ public:
 
     int getMaximum() const {return maximum;}
 
+    bool getStrict() const {return flags.isSet(ACL_F_STRICT);}
+
 private:
+    static Prototype RegistryProtoype;
+    static ACLMaxUserIP RegistryEntry_;
+    static ACLFlag SupportedFlags[];
+
     int match(Auth::UserRequest::Pointer auth_user_request, Ip::Address const &src_addr);
-
-public:
-    Acl::BooleanOptionValue beStrict; ///< Enforce "one user, one device" policy?
-
-private:
     char const *class_;
     int maximum;
 };
+
+MEMPROXY_CLASS_INLINE(ACLMaxUserIP);
 
 #endif /* USE_AUTH */
 #endif /* SQUID_ACLMAXUSERIP_H */

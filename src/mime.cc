@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -9,55 +9,54 @@
 /* DEBUG: section 25    MIME Parsing and Internal Icons */
 
 #include "squid.h"
+#include "disk.h"
 #include "fde.h"
-#include "fs_io.h"
 #include "globals.h"
 #include "HttpHdrCc.h"
 #include "HttpReply.h"
 #include "HttpRequest.h"
 #include "internal.h"
+#include "Mem.h"
 #include "MemBuf.h"
 #include "MemObject.h"
 #include "mime.h"
+#include "RequestFlags.h"
 #include "SquidConfig.h"
 #include "Store.h"
 #include "StoreClient.h"
-
-#include <array>
 
 #if HAVE_SYS_STAT_H
 #include <sys/stat.h>
 #endif
 
+#define GET_HDR_SZ 1024
+
 /* forward declarations */
 static void mimeFreeMemory(void);
-static const SBuf mimeGetIcon(const char *fn);
+static char const *mimeGetIcon(const char *fn);
 
 class MimeIcon : public StoreClient
 {
-    MEMPROXY_CLASS(MimeIcon);
-
 public:
     explicit MimeIcon(const char *aName);
     ~MimeIcon();
+    MEMPROXY_CLASS(MimeIcon);
+
     void setName(char const *);
-    SBuf getName() const;
+    char const * getName() const;
     void load();
 
     /* StoreClient API */
     virtual void created(StoreEntry *);
-    virtual LogTags *loggingTags() { return nullptr; } // no access logging/ACLs
-    virtual void fillChecklist(ACLFilledChecklist &) const;
 
 private:
-    SBuf icon_;
+    const char *icon_;
     char *url_;
 };
+MEMPROXY_CLASS_INLINE(MimeIcon);
 
 class MimeEntry
 {
-    MEMPROXY_CLASS(MimeEntry);
-
 public:
     explicit MimeEntry(const char *aPattern, const regex_t &compiledPattern,
                        const char *aContentType,
@@ -65,6 +64,7 @@ public:
                        bool optionViewEnable, bool optionDownloadEnable,
                        const char *anIconName);
     ~MimeEntry();
+    MEMPROXY_CLASS(MimeEntry);
 
     const char *pattern;
     regex_t compiled_pattern;
@@ -76,6 +76,7 @@ public:
     MimeIcon theIcon;
     MimeEntry *next;
 };
+MEMPROXY_CLASS_INLINE(MimeEntry);
 
 static MimeEntry *MimeTable = NULL;
 static MimeEntry **MimeTableTail = &MimeTable;
@@ -119,37 +120,42 @@ mimeGetEntry(const char *fn, int skip_encodings)
 }
 
 MimeIcon::MimeIcon(const char *aName) :
-    url_(nullptr)
+    icon_(xstrdup(aName))
 {
-    setName(aName);
+    url_ = xstrdup(internalLocalUri("/squid-internal-static/icons/", icon_));
 }
 
 MimeIcon::~MimeIcon()
 {
+    xfree(icon_);
     xfree(url_);
 }
 
 void
 MimeIcon::setName(char const *aString)
 {
+    xfree(icon_);
     xfree(url_);
-    icon_ = aString;
+    icon_ = xstrdup(aString);
     url_ = xstrdup(internalLocalUri("/squid-internal-static/icons/", icon_));
 }
 
-SBuf
+char const *
 MimeIcon::getName() const
 {
     return icon_;
 }
 
-const SBuf
+char const *
 mimeGetIcon(const char *fn)
 {
     MimeEntry *m = mimeGetEntry(fn, 1);
 
-    if (!m || !m->theIcon.getName().cmp(dash_str))
-        return SBuf();
+    if (m == NULL)
+        return NULL;
+
+    if (!strcmp(m->theIcon.getName(), dash_str))
+        return NULL;
 
     return m->theIcon.getName();
 }
@@ -157,17 +163,16 @@ mimeGetIcon(const char *fn)
 const char *
 mimeGetIconURL(const char *fn)
 {
-    SBuf icon(mimeGetIcon(fn));
+    char const *icon = mimeGetIcon(fn);
 
-    if (icon.isEmpty())
+    if (icon == NULL)
         return null_string;
 
     if (Config.icons.use_short_names) {
-        static SBuf mb;
-        mb.clear();
-        mb.append("/squid-internal-static/icons/");
-        mb.append(icon);
-        return mb.c_str();
+        static MemBuf mb;
+        mb.reset();
+        mb.Printf("/squid-internal-static/icons/%s", icon);
+        return mb.content();
     } else {
         return internalLocalUri("/squid-internal-static/icons/", icon);
     }
@@ -250,8 +255,7 @@ mimeInit(char *filename)
         return;
 
     if ((fp = fopen(filename, "r")) == NULL) {
-        int xerrno = errno;
-        debugs(25, DBG_IMPORTANT, "mimeInit: " << filename << ": " << xstrerr(xerrno));
+        debugs(25, DBG_IMPORTANT, "mimeInit: " << filename << ": " << xstrerror());
         return;
     }
 
@@ -351,7 +355,7 @@ mimeFreeMemory(void)
 void
 MimeIcon::load()
 {
-    const char *type = mimeGetContentType(icon_.c_str());
+    const char *type = mimeGetContentType(icon_);
 
     if (type == NULL)
         fatal("Unknown icon format while reading mime.conf\n");
@@ -363,7 +367,7 @@ void
 MimeIcon::created(StoreEntry *newEntry)
 {
     /* if the icon is already in the store, do nothing */
-    if (newEntry)
+    if (!newEntry->isNull())
         return;
     // XXX: if a 204 is cached due to earlier load 'failure' we should try to reload.
 
@@ -373,7 +377,7 @@ MimeIcon::created(StoreEntry *newEntry)
 
     static char path[MAXPATHLEN];
     *path = 0;
-    if (snprintf(path, sizeof(path)-1, "%s/" SQUIDSBUFPH, Config.icons.directory, SQUIDSBUFPRINT(icon_)) < 0) {
+    if (snprintf(path, sizeof(path)-1, "%s/%s", Config.icons.directory, icon_) < 0) {
         debugs(25, DBG_CRITICAL, "ERROR: icon file '" << Config.icons.directory << "/" << icon_ << "' path is longer than " << MAXPATHLEN << " bytes");
         status = Http::scNoContent;
     }
@@ -395,42 +399,42 @@ MimeIcon::created(StoreEntry *newEntry)
         status = Http::scNoContent;
     }
 
-    StoreEntry *e = storeCreatePureEntry(url_, url_, Http::METHOD_GET);
-    e->lock("MimeIcon::created");
+    // fill newEntry with a canned 2xx response object
+    RequestFlags flags;
+    flags.cachable = true;
+    StoreEntry *e = storeCreateEntry(url_,url_,flags,Http::METHOD_GET);
+    assert(e != NULL);
     EBIT_SET(e->flags, ENTRY_SPECIAL);
-    const auto madePublic = e->setPublicKey();
-    assert(madePublic); // nothing can block ENTRY_SPECIAL from becoming public
+    e->setPublicKey();
+    e->buffer();
+    HttpRequest *r = HttpRequest::CreateFromUrl(url_);
 
-    /* fill `e` with a canned 2xx response object */
-
-    const MasterXaction::Pointer mx = new MasterXaction(XactionInitiator::initIcon);
-    HttpRequestPointer r(HttpRequest::FromUrl(url_, mx));
-    if (!r)
+    if (NULL == r)
         fatalf("mimeLoadIcon: cannot parse internal URL: %s", url_);
 
-    e->buffer();
-
     e->mem_obj->request = r;
+    HTTPMSGLOCK(e->mem_obj->request);
 
-    HttpReplyPointer reply(new HttpReply);
+    HttpReply *reply = new HttpReply;
 
     if (status == Http::scNoContent)
         reply->setHeaders(status, NULL, NULL, 0, -1, -1);
     else
-        reply->setHeaders(status, NULL, mimeGetContentType(icon_.c_str()), sb.st_size, sb.st_mtime, -1);
+        reply->setHeaders(status, NULL, mimeGetContentType(icon_), sb.st_size, sb.st_mtime, -1);
     reply->cache_control = new HttpHdrCc();
     reply->cache_control->maxAge(86400);
     reply->header.putCc(reply->cache_control);
-    e->replaceHttpReply(reply.getRaw());
+    e->replaceHttpReply(reply);
 
     if (status == Http::scOkay) {
         /* read the file into the buffer and append it to store */
         int n;
-        std::array<char, 4096> buf;
-        while ((n = FD_READ_METHOD(fd, buf.data(), buf.size())) > 0)
-            e->append(buf.data(), n);
+        char *buf = (char *)memAllocate(MEM_4K_BUF);
+        while ((n = FD_READ_METHOD(fd, buf, 4096)) > 0)
+            e->append(buf, n);
 
         file_close(fd);
+        memFree(buf, MEM_4K_BUF);
     }
 
     e->flush();
@@ -438,13 +442,6 @@ MimeIcon::created(StoreEntry *newEntry)
     e->timestampsSet();
     e->unlock("MimeIcon::created");
     debugs(25, 3, "Loaded icon " << url_);
-}
-
-void
-MimeIcon::fillChecklist(ACLFilledChecklist &) const
-{
-    // Unreachable: We never mayInitiateCollapsing() or startCollapsingOn().
-    assert(false);
 }
 
 MimeEntry::~MimeEntry()
@@ -464,7 +461,7 @@ MimeEntry::MimeEntry(const char *aPattern, const regex_t &compiledPattern,
     content_type(xstrdup(aContentType)),
     content_encoding(xstrdup(aContentEncoding)),
     view_option(optionViewEnable),
-    download_option(optionDownloadEnable),
+    download_option(optionViewEnable),
     theIcon(anIconName), next(NULL)
 {
     if (!strcasecmp(aTransferMode, "ascii"))

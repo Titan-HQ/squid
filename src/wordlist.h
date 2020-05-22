@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -10,8 +10,9 @@
 #define SQUID_WORDLIST_H
 
 #include "globals.h"
+#include "MemPool.h"
 #include "profiler/Profiler.h"
-#include "sbuf/List.h"
+#include "SBufList.h"
 
 /** A list of C-strings
  *
@@ -19,24 +20,13 @@
  */
 class wordlist
 {
-    MEMPROXY_CLASS(wordlist);
-    friend char *wordlistChopHead(wordlist **);
-
 public:
-    wordlist() : key(nullptr), next(nullptr) {}
-    // create a new wordlist node, with a copy of k as key
-    explicit wordlist(const char *k) : key(xstrdup(k)), next(nullptr) {}
-
-    wordlist(const wordlist &) = delete;
-    wordlist &operator=(const wordlist &) = delete;
-
+    MEMPROXY_CLASS(wordlist);
     char *key;
     wordlist *next;
-
-private:
-    // does not free data members.
-    ~wordlist() = default;
 };
+
+MEMPROXY_CLASS_INLINE(wordlist);
 
 class MemBuf;
 
@@ -48,20 +38,27 @@ const char *wordlistAdd(wordlist **, const char *);
 
 /** Concatenate a wordlist
  *
- * \deprecated use SBufListContainerJoin(SBuf()) from sbuf/Algorithms.h instead
+ * \deprecated use SBufListContainerJoin(SBuf()) from SBufAlgos.h instead
  */
 void wordlistCat(const wordlist *, MemBuf *);
 
+/** append a wordlist to another
+ *
+ * \deprecated use SBufList.merge(otherwordlist) instead
+ */
+void wordlistAddWl(wordlist **, wordlist *);
+
+/** Concatenate the words in a wordlist
+ *
+ * \deprecated use SBufListContainerJoin(SBuf()) from SBufAlgos.h instead
+ */
+void wordlistJoin(wordlist **, wordlist **);
+
+/// duplicate a wordlist
+wordlist *wordlistDup(const wordlist *);
+
 /// destroy a wordlist
 void wordlistDestroy(wordlist **);
-
-/**  Remove and destroy the first element while preserving and returning its key
- *
- * \note the returned key must be freed by the caller using safe_free
- * \note wl is altered so that it points to the second element
- * \return nullptr if pointed-to wordlist is nullptr.
- */
-char *wordlistChopHead(wordlist **);
 
 /// convert a wordlist to a SBufList
 SBufList ToSBufList(wordlist *);

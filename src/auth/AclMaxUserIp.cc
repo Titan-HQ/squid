@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -18,9 +18,22 @@
 #include "Parsing.h"
 #include "wordlist.h"
 
+ACLFlag ACLMaxUserIP::SupportedFlags[] = {ACL_F_STRICT, ACL_F_END};
+
 ACLMaxUserIP::ACLMaxUserIP(char const *theClass) :
+    ACL(SupportedFlags),
     class_(theClass),
     maximum(0)
+{}
+
+ACLMaxUserIP::ACLMaxUserIP(ACLMaxUserIP const &old) :
+    class_(old.class_),
+    maximum(old.maximum)
+{
+    flags = old.flags;
+}
+
+ACLMaxUserIP::~ACLMaxUserIP()
 {}
 
 ACL *
@@ -45,15 +58,6 @@ bool
 ACLMaxUserIP::valid() const
 {
     return maximum > 0;
-}
-
-const Acl::Options &
-ACLMaxUserIP::options()
-{
-    static const Acl::BooleanOption BeStrict;
-    static const Acl::Options MyOptions = { { "-s", &BeStrict } };
-    BeStrict.linkWith(&beStrict);
-    return MyOptions;
 }
 
 void
@@ -98,7 +102,7 @@ ACLMaxUserIP::match(Auth::UserRequest::Pointer auth_user_request, Ip::Address co
     debugs(28, DBG_IMPORTANT, "aclMatchUserMaxIP: user '" << auth_user_request->username() << "' tries to use too many IP addresses (max " << maximum << " allowed)!");
 
     /* this is a match */
-    if (beStrict) {
+    if (flags.isSet(ACL_F_STRICT)) {
         /*
          * simply deny access - the user name is already associated with
          * the request

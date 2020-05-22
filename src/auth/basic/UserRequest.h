@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -9,9 +9,8 @@
 #ifndef _SQUID_SRC_AUTH_BASIC_USERREQUEST_H
 #define _SQUID_SRC_AUTH_BASIC_USERREQUEST_H
 
-#if HAVE_AUTH_MODULE_BASIC
-
 #include "auth/UserRequest.h"
+#include "MemPool.h"
 
 class ConnStateData;
 class HttpRequest;
@@ -26,14 +25,14 @@ namespace Basic
 
 class UserRequest : public Auth::UserRequest
 {
+public:
     MEMPROXY_CLASS(Auth::Basic::UserRequest);
 
-public:
     UserRequest() {}
     virtual ~UserRequest() { assert(LockCount()==0); }
 
     virtual int authenticated() const;
-    virtual void authenticate(HttpRequest * request, ConnStateData *conn, Http::HdrType type);
+    virtual void authenticate(HttpRequest * request, ConnStateData *conn, http_hdr_type type);
     virtual Auth::Direction module_direction();
     virtual void startHelperLookup(HttpRequest * request, AccessLogEntry::Pointer &al, AUTHCB *, void *);
     virtual const char *credentialsStr();
@@ -45,6 +44,7 @@ private:
 } // namespace Basic
 } // namespace Auth
 
-#endif /* HAVE_AUTH_MODULE_BASIC */
+MEMPROXY_CLASS_INLINE(Auth::Basic::UserRequest);
+
 #endif /* _SQUID_SRC_AUTH_BASIC_USERREQUEST_H */
 

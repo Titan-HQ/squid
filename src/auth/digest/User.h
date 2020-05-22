@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -9,11 +9,7 @@
 #ifndef _SQUID_AUTH_DIGEST_USER_H
 #define _SQUID_AUTH_DIGEST_USER_H
 
-#if HAVE_AUTH_MODULE_DIGEST
-
-#include "auth/digest/Config.h"
 #include "auth/User.h"
-#include "rfc2617.h"
 
 namespace Auth
 {
@@ -23,17 +19,14 @@ namespace Digest
 /** User credentials for the Digest authentication protocol */
 class User : public Auth::User
 {
+public:
     MEMPROXY_CLASS(Auth::Digest::User);
 
-public:
-    User(Auth::SchemeConfig *, const char *requestRealm);
-    virtual ~User();
+    User(Auth::Config *, const char *requestRealm);
+    ~User();
     int authenticated() const;
-    virtual int32_t ttl() const override;
 
-    /* Auth::User API */
-    static CbcPointer<Auth::CredentialsCache> Cache();
-    virtual void addToNameCache() override;
+    virtual int32_t ttl() const;
 
     HASH HA1;
     int HA1created;
@@ -44,9 +37,10 @@ public:
     digest_nonce_h * currentNonce();
 };
 
+MEMPROXY_CLASS_INLINE(Auth::Digest::User);
+
 } // namespace Digest
 } // namespace Auth
 
-#endif /* HAVE_AUTH_MODULE_DIGEST */
 #endif /* _SQUID_AUTH_DIGEST_USER_H */
 

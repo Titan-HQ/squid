@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -8,10 +8,6 @@
 
 #ifndef SQUID_INCLUDE_UNITTESTMAIN_H
 #define SQUID_INCLUDE_UNITTESTMAIN_H
-
-#if ENABLE_DEBUG_SECTION
-#include "Debug.h"
-#endif /* ENABLE_DEBUG_SECTION */
 
 #include <cppunit/BriefTestProgressListener.h>
 #include <cppunit/TextTestProgressListener.h>
@@ -22,12 +18,8 @@
 #include <cppunit/TestRunner.h>
 
 int
-main(int, char *[])
+main( int argc, char* argv[] )
 {
-#if ENABLE_DEBUG_SECTION
-    Debug::Levels[ENABLE_DEBUG_SECTION] = 99;
-#endif
-
     // Create the event manager and test controller
     CPPUNIT_NS::TestResult controller;
 

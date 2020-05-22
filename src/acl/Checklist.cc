@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -54,12 +54,28 @@ ACLChecklist::completeNonBlocking()
     checkCallback(currentAnswer());
 }
 
+bool ACLChecklist::Update(const allow_t &finalAnswer, const char *reason)
+{
+    assert (!finished() && !asyncInProgress());
+    allow_ = finalAnswer;
+    debugs(28, 3, HERE << this << " answer " << allow_ << " for " << reason);
+    return (true);
+}
+
+const allow_t & ACLChecklist::lastAnswer() {
+	if (this->accessList) {
+		return ((this->last_=this->accessList->lastAction()));
+	}
+	return (this->last_);//cached
+}
+
 void
 ACLChecklist::markFinished(const allow_t &finalAnswer, const char *reason)
 {
     assert (!finished() && !asyncInProgress());
     finished_ = true;
     allow_ = finalAnswer;
+    if (this->accessList) last_=this->accessList->lastAction();
     debugs(28, 3, HERE << this << " answer " << allow_ << " for " << reason);
 }
 
@@ -174,25 +190,28 @@ ACLChecklist::checkCallback(allow_t answer)
     delete this;
 }
 
+static uint64_t _idctx=0;
 ACLChecklist::ACLChecklist() :
-    accessList (NULL),
-    callback (NULL),
-    callback_data (NULL),
-    asyncCaller_(false),
-    occupied_(false),
-    finished_(false),
-    allow_(ACCESS_DENIED),
-    asyncStage_(asyncNone),
-    state_(NullState::Instance()),
-    asyncLoopDepth_(0)
+        accessList (NULL),
+        callback (NULL),
+        callback_data (NULL),
+        asyncCaller_(false),
+        occupied_(false),
+        finished_(false),
+        allow_(ACCESS_DENIED),
+        last_(ACCESS_DENIED),
+        asyncStage_(asyncNone),
+        state_(NullState::Instance()),
+        asyncLoopDepth_(0)
 {
+   _id=_idctx++;
 }
 
 ACLChecklist::~ACLChecklist()
 {
     assert (!asyncInProgress());
 
-    changeAcl(nullptr);
+    cbdataReferenceDone(accessList);
 
     debugs(28, 4, "ACLChecklist::~ACLChecklist: destroyed " << this);
 }
@@ -242,6 +261,7 @@ ACLChecklist::nonBlockingCheck(ACLCB * callback_, void *callback_data_)
     callback_data = cbdataReference(callback_data_);
     asyncCaller_ = true;
 
+
     /** The ACL List should NEVER be NULL when calling this method.
      * Always caller should check for NULL and handle appropriate to its needs first.
      * We cannot select a sensible default for all callers here. */
@@ -253,8 +273,9 @@ ACLChecklist::nonBlockingCheck(ACLCB * callback_, void *callback_data_)
 
     if (prepNonBlocking()) {
         matchAndFinish(); // calls markFinished() on success
-        if (!asyncInProgress())
+        if (!asyncInProgress()){
             completeNonBlocking();
+        }
     } // else checkCallback() has been called
 }
 
@@ -314,7 +335,9 @@ ACLChecklist::fastCheck(const Acl::Tree * list)
 
     // Concurrent checks are not supported, but sequential checks are, and they
     // may use a mixture of fastCheck(void) and fastCheck(list) calls.
-    const Acl::Tree * const savedList = changeAcl(list);
+    const Acl::Tree * const savedList = accessList;
+
+    accessList = cbdataReference(list);
 
     // assume DENY/ALLOW on mis/matches due to action-free accessList
     // matchAndFinish() takes care of the ALLOW case
@@ -323,7 +346,8 @@ ACLChecklist::fastCheck(const Acl::Tree * list)
     if (!finished())
         markFinished(ACCESS_DENIED, "ACLs failed to match");
 
-    changeAcl(savedList);
+    cbdataReferenceDone(accessList);
+    accessList = savedList;
     occupied_ = false;
     PROF_stop(aclCheckFast);
     return currentAnswer();
@@ -372,16 +396,27 @@ ACLChecklist::calcImplicitAnswer()
 {
     const allow_t lastAction = (accessList && cbdataReferenceValid(accessList)) ?
                                accessList->lastAction() : allow_t(ACCESS_DUNNO);
-    allow_t implicitRuleAnswer = ACCESS_DUNNO;
-    if (lastAction == ACCESS_DENIED) // reverse last seen "deny"
-        implicitRuleAnswer = ACCESS_ALLOWED;
-    else if (lastAction == ACCESS_ALLOWED) // reverse last seen "allow"
-        implicitRuleAnswer = ACCESS_DENIED;
-    // else we saw no rules and will respond with ACCESS_DUNNO
 
-    debugs(28, 3, HERE << this << " NO match found, last action " <<
-           lastAction << " so returning " << implicitRuleAnswer);
-    markFinished(implicitRuleAnswer, "implicit rule won");
+    switch (lastAction){
+    	case ACCESS_DENIED:{
+    		//implicitRuleAnswer = ACCESS_ALLOWED;
+    		markFinished(ACCESS_ALLOWED, "implicit rule won"); // reverse last seen "deny"
+    		return;
+    	}break;
+    	case ACCESS_ALLOWED:{
+    		if (allow_==ACCESS_DUNNO){
+    			markFinished(ACCESS_DUNNO, "implicit rule won");
+    			return;
+    		};
+    		//implicitRuleAnswer = ACCESS_DENIED;
+    		markFinished(ACCESS_DENIED, "implicit rule won"); // reverse last seen "allow"
+    		return;
+    	}break;
+    	default:{
+    		markFinished(ACCESS_DUNNO, "implicit rule won");
+    		return;
+    	}break;
+    }
 }
 
 bool

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -20,10 +20,11 @@
 #include "adaptation/ecap/MessageRep.h"
 #include "adaptation/ecap/XactionRep.h"
 #include "base/TextException.h"
+#include "URL.h"
 
 /* HeaderRep */
 
-Adaptation::Ecap::HeaderRep::HeaderRep(Http::Message &aMessage): theHeader(aMessage.header),
+Adaptation::Ecap::HeaderRep::HeaderRep(HttpMsg &aMessage): theHeader(aMessage.header),
     theMessage(aMessage)
 {
 }
@@ -31,17 +32,18 @@ Adaptation::Ecap::HeaderRep::HeaderRep(Http::Message &aMessage): theHeader(aMess
 bool
 Adaptation::Ecap::HeaderRep::hasAny(const Name &name) const
 {
-    const Http::HdrType squidId = TranslateHeaderId(name);
-    return squidId == Http::HdrType::OTHER ?
-           theHeader.hasNamed(name.image().c_str(), name.image().size()) :
-           static_cast<bool>(theHeader.has(squidId));
+    const http_hdr_type squidId = TranslateHeaderId(name);
+    // XXX: optimize to remove getByName: we do not need the value here
+    return squidId == HDR_OTHER ?
+           theHeader.getByName(name.image().c_str()).size() > 0:
+           (bool)theHeader.has(squidId);
 }
 
 Adaptation::Ecap::HeaderRep::Value
 Adaptation::Ecap::HeaderRep::value(const Name &name) const
 {
-    const Http::HdrType squidId = TranslateHeaderId(name);
-    const String value = squidId == Http::HdrType::OTHER ?
+    const http_hdr_type squidId = TranslateHeaderId(name);
+    const String value = squidId == HDR_OTHER ?
                          theHeader.getByName(name.image().c_str()) :
                          theHeader.getStrOrList(squidId);
     return value.size() > 0 ?
@@ -51,26 +53,26 @@ Adaptation::Ecap::HeaderRep::value(const Name &name) const
 void
 Adaptation::Ecap::HeaderRep::add(const Name &name, const Value &value)
 {
-    const Http::HdrType squidId = TranslateHeaderId(name); // Http::HdrType::OTHER OK
-    HttpHeaderEntry *e = new HttpHeaderEntry(squidId, SBuf(name.image()),
+    const http_hdr_type squidId = TranslateHeaderId(name); // HDR_OTHER OK
+    HttpHeaderEntry *e = new HttpHeaderEntry(squidId, name.image().c_str(),
             value.toString().c_str());
     theHeader.addEntry(e);
 
-    if (squidId == Http::HdrType::CONTENT_LENGTH)
-        theMessage.content_length = theHeader.getInt64(Http::HdrType::CONTENT_LENGTH);
+    if (squidId == HDR_CONTENT_LENGTH)
+        theMessage.content_length = theHeader.getInt64(HDR_CONTENT_LENGTH);
 }
 
 void
 Adaptation::Ecap::HeaderRep::removeAny(const Name &name)
 {
-    const Http::HdrType squidId = TranslateHeaderId(name);
-    if (squidId == Http::HdrType::OTHER)
+    const http_hdr_type squidId = TranslateHeaderId(name);
+    if (squidId == HDR_OTHER)
         theHeader.delByName(name.image().c_str());
     else
         theHeader.delById(squidId);
 
-    if (squidId == Http::HdrType::CONTENT_LENGTH)
-        theMessage.content_length = theHeader.getInt64(Http::HdrType::CONTENT_LENGTH);
+    if (squidId == HDR_CONTENT_LENGTH)
+        theMessage.content_length = theHeader.getInt64(HDR_CONTENT_LENGTH);
 }
 
 void
@@ -78,7 +80,7 @@ Adaptation::Ecap::HeaderRep::visitEach(libecap::NamedValueVisitor &visitor) cons
 {
     HttpHeaderPos pos = HttpHeaderInitPos;
     while (HttpHeaderEntry *e = theHeader.getEntry(&pos)) {
-        const Name name(std::string(e->name.rawContent(), e->name.length())); // optimize: find std Names
+        const Name name(e->name.termedBuf()); // optimize: find std Names
         name.assignHostId(e->id);
         visitor.visit(name, Value(e->value.rawBuf(), e->value.size()));
     }
@@ -89,7 +91,11 @@ Adaptation::Ecap::HeaderRep::image() const
 {
     MemBuf mb;
     mb.init();
-    theMessage.packInto(&mb, true);
+
+    Packer p;
+    packerToMemInit(&p, &mb);
+    theMessage.packInto(&p, true);
+    packerClean(&p);
     return Area::FromTempBuffer(mb.content(), mb.contentSize());
 }
 
@@ -97,21 +103,24 @@ Adaptation::Ecap::HeaderRep::image() const
 void
 Adaptation::Ecap::HeaderRep::parse(const Area &buf)
 {
+    MemBuf mb;
+    mb.init();
+    mb.append(buf.start, buf.size);
     Http::StatusCode error;
-    Must(theMessage.parse(buf.start, buf.size, true, &error));
+    Must(theMessage.parse(&mb, true, &error));
 }
 
-Http::HdrType
+http_hdr_type
 Adaptation::Ecap::HeaderRep::TranslateHeaderId(const Name &name)
 {
     if (name.assignedHostId())
-        return static_cast<Http::HdrType>(name.hostId());
-    return Http::HdrType::OTHER;
+        return static_cast<http_hdr_type>(name.hostId());
+    return HDR_OTHER;
 }
 
 /* FirstLineRep */
 
-Adaptation::Ecap::FirstLineRep::FirstLineRep(Http::Message &aMessage): theMessage(aMessage)
+Adaptation::Ecap::FirstLineRep::FirstLineRep(HttpMsg &aMessage): theMessage(aMessage)
 {
 }
 
@@ -160,10 +169,6 @@ Adaptation::Ecap::FirstLineRep::protocol() const
         return protocolIcy;
     case AnyP::PROTO_COAP:
     case AnyP::PROTO_COAPS: // use 'unknown' until libecap supports coap:// and coaps://
-    // other protocols defined in Squid but not libecap use 'unknown'
-    case AnyP::PROTO_AUTHORITY_FORM:
-    case AnyP::PROTO_SSL:
-    case AnyP::PROTO_TLS:
     case AnyP::PROTO_UNKNOWN:
         return protocolUnknown; // until we remember the protocol image
     case AnyP::PROTO_NONE:
@@ -202,21 +207,22 @@ Adaptation::Ecap::RequestLineRep::RequestLineRep(HttpRequest &aMessage):
 void
 Adaptation::Ecap::RequestLineRep::uri(const Area &aUri)
 {
-    // TODO: if method is not set, AnyP::Uri::parse will assume it is not connect;
-    // Can we change AnyP::Uri::parse API to remove the method parameter?
-    const char *buf = aUri.toString().c_str();
-    const bool ok = theMessage.url.parse(theMessage.method, buf);
+    // TODO: if method is not set, urlPath will assume it is not connect;
+    // Can we change urlParse API to remove the method parameter?
+    // TODO: optimize: urlPath should take constant URL buffer
+    char *buf = xstrdup(aUri.toString().c_str());
+    const bool ok = urlParse(theMessage.method, buf, &theMessage);
+    xfree(buf);
     Must(ok);
 }
 
 Adaptation::Ecap::RequestLineRep::Area
 Adaptation::Ecap::RequestLineRep::uri() const
 {
-    const SBuf &fullUrl = theMessage.effectiveRequestUri();
-    // XXX: effectiveRequestUri() cannot return NULL or even empty string, some other problem?
-    Must(!fullUrl.isEmpty());
+    const char *fullUrl = urlCanonical(&theMessage);
+    Must(fullUrl);
     // optimize: avoid copying by having an Area::Detail that locks theMessage
-    return Area::FromTempBuffer(fullUrl.rawContent(), fullUrl.length());
+    return Area::FromTempBuffer(fullUrl, strlen(fullUrl));
 }
 
 void
@@ -229,7 +235,8 @@ Adaptation::Ecap::RequestLineRep::method(const Name &aMethod)
         theMessage.method = HttpRequestMethod(static_cast<Http::MethodType>(id));
     } else {
         const std::string &image = aMethod.image();
-        theMessage.method.HttpRequestMethodXXX(image.c_str());
+        theMessage.method = HttpRequestMethod(image.data(),
+                                              image.data() + image.size());
     }
 }
 
@@ -290,7 +297,7 @@ Adaptation::Ecap::StatusLineRep::StatusLineRep(HttpReply &aMessage):
 void
 Adaptation::Ecap::StatusLineRep::statusCode(int code)
 {
-    theMessage.sline.set(theMessage.sline.version, static_cast<Http::StatusCode>(code), nullptr);
+    theMessage.sline.set(theMessage.sline.version, static_cast<Http::StatusCode>(code), theMessage.sline.reason());
 }
 
 int
@@ -301,11 +308,9 @@ Adaptation::Ecap::StatusLineRep::statusCode() const
 }
 
 void
-Adaptation::Ecap::StatusLineRep::reasonPhrase(const Area &)
+Adaptation::Ecap::StatusLineRep::reasonPhrase(const Area &str)
 {
-    // Squid does not support external custom reason phrases so we have
-    // to just reset it (in case there was a custom internal reason set)
-    theMessage.sline.resetReason();
+    theMessage.sline.set(theMessage.sline.version, theMessage.sline.status(), str.toString().c_str());
 }
 
 Adaptation::Ecap::StatusLineRep::Area
@@ -355,12 +360,12 @@ Adaptation::Ecap::BodyRep::tie(const BodyPipe::Pointer &aBody)
 Adaptation::Ecap::BodyRep::BodySize
 Adaptation::Ecap::BodyRep::bodySize() const
 {
-    return (theBody != nullptr && theBody->bodySizeKnown()) ? BodySize(theBody->bodySize()) : BodySize();
+    return !theBody ? BodySize() : BodySize(theBody->bodySize());
 }
 
 /* MessageRep */
 
-Adaptation::Ecap::MessageRep::MessageRep(Http::Message *rawHeader):
+Adaptation::Ecap::MessageRep::MessageRep(HttpMsg *rawHeader):
     theMessage(rawHeader), theFirstLineRep(NULL),
     theHeaderRep(NULL), theBodyRep(NULL)
 {
@@ -389,7 +394,7 @@ Adaptation::Ecap::MessageRep::~MessageRep()
 libecap::shared_ptr<libecap::Message>
 Adaptation::Ecap::MessageRep::clone() const
 {
-    Http::Message *hdr = theMessage.header->clone();
+    HttpMsg *hdr = theMessage.header->clone();
     hdr->body_pipe = NULL; // if any; TODO: remove pipe cloning from ::clone?
     libecap::shared_ptr<libecap::Message> res(new MessageRep(hdr));
 

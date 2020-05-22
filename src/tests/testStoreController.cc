@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -7,12 +7,13 @@
  */
 
 #include "squid.h"
+#include "Mem.h"
 #include "MemObject.h"
 #include "SquidConfig.h"
 #include "SquidTime.h"
 #include "Store.h"
-#include "store/Disks.h"
 #include "StoreSearch.h"
+#include "SwapDir.h"
 #include "testStoreController.h"
 #include "TestSwapDir.h"
 
@@ -29,10 +30,12 @@ addSwapDir(TestSwapDirPointer aStore)
 void
 testStoreController::testStats()
 {
-    Store::Init();
     StoreEntry *logEntry = new StoreEntry;
-    logEntry->createMemObject("dummy_storeId", NULL, HttpRequestMethod());
+    logEntry->makeMemObject();
+    logEntry->mem_obj->setUris("dummy_storeId", NULL, HttpRequestMethod());
     logEntry->store_status = STORE_PENDING;
+    StorePointer aRoot (new StoreController);
+    Store::Root(aRoot);
     TestSwapDirPointer aStore (new TestSwapDir);
     TestSwapDirPointer aStore2 (new TestSwapDir);
     addSwapDir(aStore);
@@ -43,7 +46,7 @@ testStoreController::testStats()
     free_cachedir(&Config.cacheSwap);
     CPPUNIT_ASSERT_EQUAL(true, aStore->statsCalled);
     CPPUNIT_ASSERT_EQUAL(true, aStore2->statsCalled);
-    Store::FreeMemory();
+    Store::Root(NULL);
 }
 
 static void
@@ -53,8 +56,6 @@ commonInit()
 
     if (inited)
         return;
-
-    Config.memShared.defaultTo(false);
 
     Mem::Init();
 
@@ -72,20 +73,23 @@ testStoreController::testMaxSize()
 {
     commonInit();
     StoreEntry *logEntry = new StoreEntry;
-    logEntry->createMemObject("dummy_storeId", NULL, HttpRequestMethod());
+    logEntry->makeMemObject();
+    logEntry->mem_obj->setUris("dummy_storeId", NULL, HttpRequestMethod());
     logEntry->store_status = STORE_PENDING;
-    Store::Init();
+    StorePointer aRoot (new StoreController);
+    Store::Root(aRoot);
     TestSwapDirPointer aStore (new TestSwapDir);
     TestSwapDirPointer aStore2 (new TestSwapDir);
     addSwapDir(aStore);
     addSwapDir(aStore2);
     CPPUNIT_ASSERT_EQUAL(static_cast<uint64_t>(6), Store::Root().maxSize());
     free_cachedir(&Config.cacheSwap);
-    Store::FreeMemory();
+    Store::Root(NULL);
 }
 
 static StoreEntry *
-addedEntry(Store::Disk *aStore,
+addedEntry(StorePointer hashStore,
+           StorePointer aStore,
            String name,
            String varySpec,
            String varyKey
@@ -100,7 +104,7 @@ addedEntry(Store::Disk *aStore,
     e->swap_dirn = -1;
 
     for (int i=0; i < Config.cacheSwap.n_configured; ++i) {
-        if (INDEXSD(i) == aStore)
+        if (INDEXSD (i) == aStore.getRaw())
             e->swap_dirn = i;
     }
 
@@ -111,6 +115,8 @@ addedEntry(Store::Disk *aStore,
     e->expires = squid_curtime;
     e->lastModified(squid_curtime);
     e->refcount = 1;
+    EBIT_CLR(e->flags, RELEASE_REQUEST);
+    e->clearPrivate();
     e->ping_status = PING_NONE;
     EBIT_CLR(e->flags, ENTRY_VALIDATED);
     e->hashInsert((const cache_key *)name.termedBuf()); /* do it after we clear KEY_PRIVATE */
@@ -131,15 +137,16 @@ void
 testStoreController::testSearch()
 {
     commonInit();
-    Store::Init();
+    StorePointer aRoot (new StoreController());
+    Store::Root(aRoot);
     TestSwapDirPointer aStore (new TestSwapDir);
     TestSwapDirPointer aStore2 (new TestSwapDir);
     addSwapDir(aStore);
     addSwapDir(aStore2);
     Store::Root().init();
-    StoreEntry * entry1 = addedEntry(aStore.getRaw(), "name", NULL, NULL);
-    StoreEntry * entry2 = addedEntry(aStore2.getRaw(), "name2", NULL, NULL);
-    StoreSearchPointer search = Store::Root().search(); /* search for everything in the store */
+    StoreEntry * entry1 = addedEntry (&Store::Root(), aStore.getRaw(), "name", NULL, NULL);
+    StoreEntry * entry2 = addedEntry (&Store::Root(), aStore2.getRaw(), "name2", NULL, NULL);
+    StoreSearchPointer search = aRoot->search (NULL, NULL); /* search for everything in the store */
 
     /* nothing should be immediately available */
     CPPUNIT_ASSERT_EQUAL(false, search->error());
@@ -184,6 +191,6 @@ testStoreController::testSearch()
     CPPUNIT_ASSERT_EQUAL(static_cast<StoreEntry *>(NULL), search->currentItem());
     //CPPUNIT_ASSERT_EQUAL(false, search->next());
 
-    Store::FreeMemory();
+    Store::Root(NULL);
 }
 

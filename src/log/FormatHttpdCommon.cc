@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -27,25 +27,30 @@ Log::Format::HttpdCommon(const AccessLogEntry::Pointer &al, Logfile * logfile)
     if (al->request && al->request->auth_user_request != NULL)
         user_auth = ::Format::QuoteUrlEncodeUsername(al->request->auth_user_request->username());
 #endif
-    const char *user_ident = ::Format::QuoteUrlEncodeUsername(al->getClientIdent());
+    const char *user_ident = ::Format::QuoteUrlEncodeUsername(al->cache.rfc931);
 
     char clientip[MAX_IPSTRLEN];
     al->getLogClientIp(clientip, MAX_IPSTRLEN);
 
-    const SBuf method(al->getLogMethod());
+    static SBuf method;
+    if (al->_private.method_str)
+        method.assign(al->_private.method_str);
+    else
+        method = al->http.method.image();
 
-    logfilePrintf(logfile, "%s %s %s [%s] \"" SQUIDSBUFPH " " SQUIDSBUFPH " %s/%d.%d\" %d %" PRId64 " %s:%s%s",
+    logfilePrintf(logfile, "%s %s %s [%s] \"" SQUIDSBUFPH " %s %s/%d.%d\" %d %" PRId64 " %s%s:%s%s",
                   clientip,
                   user_ident ? user_ident : dash_str,
                   user_auth ? user_auth : dash_str,
                   Time::FormatHttpd(squid_curtime),
                   SQUIDSBUFPRINT(method),
-                  SQUIDSBUFPRINT(al->url),
+                  al->url,
                   AnyP::ProtocolType_str[al->http.version.protocol],
                   al->http.version.major, al->http.version.minor,
                   al->http.code,
                   al->http.clientReplySz.messageTotal(),
-                  al->cache.code.c_str(),
+                  LogTags_str[al->cache.code],
+                  al->http.statusSfx(),
                   hier_code_str[al->hier.code],
                   (Config.onoff.log_mime_hdrs?"":"\n"));
 

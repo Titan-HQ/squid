@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -86,7 +86,7 @@ DiskdIOStrategy::newFile(char const *path)
     return new DiskdFile (path, this);
 }
 
-DiskdIOStrategy::DiskdIOStrategy() : magic1(64), magic2(72), away(0), smsgid(-1), rmsgid(-1), wfd(-1), instanceID(newInstance())
+DiskdIOStrategy::DiskdIOStrategy() : magic1(64), magic2(72), away(0) , smsgid(-1), rmsgid(-1), wfd(-1) , instanceID(newInstance())
 {}
 
 bool
@@ -124,8 +124,7 @@ DiskdIOStrategy::unlinkFile(char const *path)
              shm_offset);
 
     if (x < 0) {
-        int xerrno = errno;
-        debugs(79, DBG_IMPORTANT, "storeDiskdSend UNLINK: " << xstrerr(xerrno));
+        debugs(79, DBG_IMPORTANT, "storeDiskdSend UNLINK: " << xstrerror());
         ::unlink(buf);      /* XXX EWW! */
         //        shm.put (shm_offset);
     }
@@ -151,16 +150,14 @@ DiskdIOStrategy::init()
     smsgid = msgget((key_t) ikey, 0700 | IPC_CREAT);
 
     if (smsgid < 0) {
-        int xerrno = errno;
-        debugs(50, DBG_CRITICAL, MYNAME << "msgget: " << xstrerr(xerrno));
+        debugs(50, DBG_CRITICAL, "storeDiskdInit: msgget: " << xstrerror());
         fatal("msgget failed");
     }
 
     rmsgid = msgget((key_t) (ikey + 1), 0700 | IPC_CREAT);
 
     if (rmsgid < 0) {
-        int xerrno = errno;
-        debugs(50, DBG_CRITICAL, MYNAME << "msgget: " << xstrerr(xerrno));
+        debugs(50, DBG_CRITICAL, "storeDiskdInit: msgget: " << xstrerror());
         fatal("msgget failed");
     }
 
@@ -251,16 +248,14 @@ SharedMemory::init(int ikey, int magic2)
                 nbufs * SHMBUF_BLKSZ, 0600 | IPC_CREAT);
 
     if (id < 0) {
-        int xerrno = errno;
-        debugs(50, DBG_CRITICAL, MYNAME << "shmget: " << xstrerr(xerrno));
+        debugs(50, DBG_CRITICAL, "storeDiskdInit: shmget: " << xstrerror());
         fatal("shmget failed");
     }
 
     buf = (char *)shmat(id, NULL, 0);
 
     if (buf == (void *) -1) {
-        int xerrno = errno;
-        debugs(50, DBG_CRITICAL, MYNAME << "shmat: " << xstrerr(xerrno));
+        debugs(50, DBG_CRITICAL, "storeDiskdInit: shmat: " << xstrerror());
         fatal("shmat failed");
     }
 
@@ -304,7 +299,7 @@ DiskdIOStrategy::handle(diomsg * M)
 
     if (M->newstyle) {
         DiskdFile *theFile = (DiskdFile *)M->callback_data;
-        theFile->unlock();
+        theFile->unlock(__FUNCTION__,__LINE__);
         theFile->completed (M);
     } else
         switch (M->mtype) {
@@ -338,12 +333,12 @@ DiskdIOStrategy::send(int mtype, int id, DiskdFile *theFile, size_t size, off_t 
 {
     diomsg M;
     M.callback_data = cbdataReference(theFile);
-    theFile->lock();
+    theFile->lock(__FUNCTION__,__LINE__);
     M.requestor = requestor;
     M.newstyle = true;
 
     if (requestor)
-        requestor->lock();
+        requestor->lock(__FUNCTION__,__LINE__);
 
     return SEND(&M, mtype, id, size, offset, shm_offset);
 }
@@ -385,8 +380,7 @@ DiskdIOStrategy::SEND(diomsg *M, int mtype, int id, size_t size, off_t offset, s
         ++diskd_stats.sent_count;
         ++away;
     } else {
-        int xerrno = errno;
-        debugs(79, DBG_IMPORTANT, MYNAME << "msgsnd: " << xstrerr(xerrno));
+        debugs(79, DBG_IMPORTANT, "storeDiskdSend: msgsnd: " << xstrerror());
         cbdataReferenceDone(M->callback_data);
         ++send_errors;
         assert(send_errors < 100);

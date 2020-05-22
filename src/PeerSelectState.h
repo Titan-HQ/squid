@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -11,126 +11,67 @@
 
 #include "AccessLogEntry.h"
 #include "acl/Checklist.h"
-#include "base/CbcPointer.h"
+#include "cbdata.h"
 #include "comm/forward.h"
 #include "hier_code.h"
 #include "ip/Address.h"
-#include "ipcache.h"
-#include "mem/forward.h"
 #include "PingData.h"
 
-class ErrorState;
-class HtcpReplyData;
 class HttpRequest;
-class icp_common_t;
 class StoreEntry;
+class ErrorState;
 
+typedef void PSC(Comm::ConnectionList *, ErrorState *, void *);
+
+void peerSelect(Comm::ConnectionList *, HttpRequest *, AccessLogEntry::Pointer const&, StoreEntry *, PSC *, void *data);
 void peerSelectInit(void);
 
-/// Interface for those who need a list of peers to forward a request to.
-class PeerSelectionInitiator: public CbdataParent
+/**
+ * A CachePeer which has been selected as a possible destination.
+ * Listed as pointers here so as to prevent duplicates being added but will
+ * be converted to a set of IP address path options before handing back out
+ * to the caller.
+ *
+ * Certain connection flags and outgoing settings will also be looked up and
+ * set based on the received request and CachePeer settings before handing back.
+ */
+class FwdServer
 {
 public:
-    virtual ~PeerSelectionInitiator() = default;
+    MEMPROXY_CLASS(FwdServer);
+    FwdServer(CachePeer *p, hier_code c) : _peer(cbdataReference(p)), code(c), next(NULL) {}
+    ~FwdServer() {cbdataReferenceDone(_peer);}
 
-    /// called when a new unique destination has been found
-    virtual void noteDestination(Comm::ConnectionPointer path) = 0;
-
-    /// called when there will be no more noteDestination() calls
-    /// \param error is a possible reason why no destinations were found; it is
-    /// guaranteed to be nil if there was at least one noteDestination() call
-    virtual void noteDestinationsEnd(ErrorState *error) = 0;
-
-    /// whether noteDestination() and noteDestinationsEnd() calls are allowed
-    bool subscribed = false;
-
-    /* protected: */
-    /// Initiates asynchronous peer selection that eventually
-    /// results in zero or more noteDestination() calls and
-    /// exactly one noteDestinationsEnd() call.
-    void startSelectingDestinations(HttpRequest *request, const AccessLogEntry::Pointer &ale, StoreEntry *entry);
+    CachePeer *_peer;                /* NULL --> origin server */
+    hier_code code;
+    FwdServer *next;
 };
 
-class FwdServer;
+MEMPROXY_CLASS_INLINE(FwdServer);
 
-/// Finds peer (including origin server) IPs for forwarding a single request.
-/// Gives PeerSelectionInitiator each found destination, in the right order.
-class PeerSelector: public Dns::IpReceiver
+class ps_state
 {
-    CBDATA_CHILD(PeerSelector);
 
 public:
-    explicit PeerSelector(PeerSelectionInitiator*);
-    virtual ~PeerSelector() override;
-
-    /* Dns::IpReceiver API */
-    virtual void noteIp(const Ip::Address &ip) override;
-    virtual void noteIps(const Dns::CachedIps *ips, const Dns::LookupDetails &details) override;
-    virtual void noteLookup(const Dns::LookupDetails &details) override;
+    ps_state();
+    ~ps_state();
 
     // Produce a URL for display identifying the transaction we are
     // trying to locate a peer for.
-    const SBuf url() const;
-
-    /// \returns valid/interested peer initiator or nil
-    PeerSelectionInitiator *interestedInitiator();
-
-    /// \returns whether the initiator may use more destinations
-    bool wantsMoreDestinations() const;
-
-    /// processes a newly discovered/finalized path
-    void handlePath(Comm::ConnectionPointer &path, FwdServer &fs);
-
-    /// a single selection loop iteration: attempts to add more destinations
-    void selectMore();
+    const char * url() const;
 
     HttpRequest *request;
     AccessLogEntry::Pointer al; ///< info for the future access.log entry
     StoreEntry *entry;
-
-    void *peerCountMcastPeerXXX = nullptr; ///< a hack to help peerCountMcastPeersStart()
-
-    ping_data ping;
-
-protected:
-    bool selectionAborted();
-
-    void handlePingTimeout();
-    void handleIcpReply(CachePeer*, const peer_t, icp_common_t *header);
-    void handleIcpParentMiss(CachePeer*, icp_common_t*);
-#if USE_HTCP
-    void handleHtcpParentMiss(CachePeer*, HtcpReplyData*);
-    void handleHtcpReply(CachePeer*, const peer_t, HtcpReplyData*);
-#endif
-
-    int checkNetdbDirect();
-    void checkAlwaysDirectDone(const allow_t answer);
-    void checkNeverDirectDone(const allow_t answer);
-
-    void selectSomeNeighbor();
-    void selectSomeNeighborReplies();
-    void selectSomeDirect();
-    void selectSomeParent();
-    void selectAllParents();
-    void selectPinned();
-
-    void addSelection(CachePeer*, const hier_code);
-
-    void resolveSelected();
-
-    static IRCB HandlePingReply;
-    static ACLCB CheckAlwaysDirectDone;
-    static ACLCB CheckNeverDirectDone;
-    static EVH HandlePingTimeout;
-
-private:
     allow_t always_direct;
     allow_t never_direct;
     int direct;   // TODO: fold always_direct/never_direct/prefer_direct into this now that ACL can do a multi-state result.
-    size_t foundPaths = 0; ///< number of unique destinations identified so far
+    PSC *callback;
+    void *callback_data;
     ErrorState *lastError;
 
-    FwdServer *servers; ///< a linked list of (unresolved) selected peers
+    Comm::ConnectionList *paths;    ///< the callers paths array. to be filled with our final results.
+    FwdServer *servers;    ///< temporary linked list of peers we will pass back.
 
     /*
      * Why are these Ip::Address instead of CachePeer *?  Because a
@@ -149,12 +90,10 @@ private:
      */
     CachePeer *hit;
     peer_t hit_type;
+    ping_data ping;
     ACLChecklist *acl_checklist;
-
-    typedef CbcPointer<PeerSelectionInitiator> Initiator;
-    Initiator initiator_; ///< recipient of the destinations we select; use interestedInitiator() to access
-
-    const InstanceId<PeerSelector> id; ///< unique identification in worker log
+private:
+    CBDATA_CLASS2(ps_state);
 };
 
 #endif /* SQUID_PEERSELECTSTATE_H */

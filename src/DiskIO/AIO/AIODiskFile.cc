@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -21,13 +21,12 @@
  */
 
 #include "squid.h"
-#include "Debug.h"
-#include "DiskIO/AIO/AIODiskFile.h"
-#include "DiskIO/AIO/AIODiskIOStrategy.h"
+#include "AIODiskFile.h"
+#include "AIODiskIOStrategy.h"
+#include "disk.h"
 #include "DiskIO/IORequestor.h"
 #include "DiskIO/ReadRequest.h"
 #include "DiskIO/WriteRequest.h"
-#include "fs_io.h"
 #include "globals.h"
 
 #include <cerrno>
@@ -52,13 +51,13 @@ AIODiskFile::error(bool const &aBool)
 }
 
 void
-AIODiskFile::open(int flags, mode_t, RefCount<IORequestor> callback)
+AIODiskFile::open(int flags, mode_t mode, RefCount<IORequestor> callback)
 {
     /* Simulate async calls */
 #if _SQUID_WINDOWS_
     fd = aio_open(path.termedBuf(), flags);
 #else
-    fd = file_open(path.termedBuf(), flags);
+    fd = file_open(path.termedBuf() , flags);
 #endif
 
     ioRequestor = callback;
@@ -132,9 +131,8 @@ AIODiskFile::read(ReadRequest *request)
 
     /* Initiate aio */
     if (aio_read(&qe->aq_e_aiocb) < 0) {
-        int xerrno = errno;
-        fatalf("Aiee! aio_read() returned error (%d)  FIXME and wrap file_read !\n", xerrno);
-        debugs(79, DBG_IMPORTANT, "WARNING: aio_read() returned error: " << xstrerr(xerrno));
+        fatalf("Aiee! aio_read() returned error (%d)  FIXME and wrap file_read !\n", errno);
+        debugs(79, DBG_IMPORTANT, "WARNING: aio_read() returned error: " << xstrerror());
         /* fall back to blocking method */
         //        file_read(fd, request->buf, request->len, request->offset, callback, data);
     }
@@ -191,9 +189,8 @@ AIODiskFile::write(WriteRequest *request)
 
     /* Initiate aio */
     if (aio_write(&qe->aq_e_aiocb) < 0) {
-        int xerrno = errno;
-        fatalf("Aiee! aio_write() returned error (%d) FIXME and wrap file_write !\n", xerrno);
-        debugs(79, DBG_IMPORTANT, "WARNING: aio_write() returned error: " << xstrerr(xerrno));
+        fatalf("Aiee! aio_write() returned error (%d) FIXME and wrap file_write !\n", errno);
+        debugs(79, DBG_IMPORTANT, "WARNING: aio_write() returned error: " << xstrerror());
         /* fall back to blocking method */
         //       file_write(fd, offset, buf, len, callback, data, freefunc);
     }

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -13,12 +13,14 @@
 #include "BodyPipe.h"
 #include "CommCalls.h"
 #include "FwdState.h"
-#include "http/forward.h"
 #include "StoreIOBuffer.h"
 #if USE_ADAPTATION
 #include "adaptation/forward.h"
 #include "adaptation/Initiator.h"
 #endif
+
+class HttpMsg;
+class HttpReply;
 
 /**
  * Client is a common base for classes such as HttpStateData and FtpStateData.
@@ -52,15 +54,10 @@ public:
     virtual void maybeReadVirginBody() = 0;
 
     /// abnormal transaction termination; reason is for debugging only
-    virtual void abortAll(const char *reason) = 0;
-
-    /// abnormal data transfer termination
-    /// \retval true the transaction will be terminated (abortAll called)
-    /// \reval false the transaction will survive
-    virtual bool abortOnData(const char *reason);
+    virtual void abortTransaction(const char *reason) = 0;
 
     /// a hack to reach HttpStateData::orignal_request
-    virtual HttpRequestPointer originalRequest();
+    virtual  HttpRequest *originalRequest();
 
 #if USE_ADAPTATION
     // Adaptation::Initiator API: start an ICAP transaction and receive adapted headers.
@@ -83,7 +80,7 @@ public: // should be protected
 
 private:
     void serverComplete2();    /**< Continuation of serverComplete */
-    bool completed = false;            /**< serverComplete() has been called */
+    bool completed;            /**< serverComplete() has been called */
 
 protected:
     // kids customize these
@@ -125,7 +122,7 @@ protected:
     void handleAdaptedBodyProductionEnded();
     void handleAdaptedBodyProducerAborted();
 
-    void handleAdaptedHeader(Http::Message *msg);
+    void handleAdaptedHeader(HttpMsg *msg);
     void handleAdaptationCompleted();
     void handleAdaptationBlocked(const Adaptation::Answer &answer);
     void handleAdaptationAborted(bool bypassable = false);
@@ -149,21 +146,18 @@ protected:
     void adaptOrFinalizeReply();
     void addVirginReplyBody(const char *buf, ssize_t len);
     void storeReplyBody(const char *buf, ssize_t len);
-    /// \deprecated use SBuf I/O API and calcBufferSpaceToReserve() instead
     size_t replyBodySpace(const MemBuf &readBuf, const size_t minSpace) const;
-    /// determine how much space the buffer needs to reserve
-    size_t calcBufferSpaceToReserve(const size_t space, const size_t wantSpace) const;
 
     void adjustBodyBytesRead(const int64_t delta);
 
     // These should be private
-    int64_t currentOffset = 0;  /**< Our current offset in the StoreEntry */
-    MemBuf *responseBodyBuffer = nullptr; /**< Data temporarily buffered for ICAP */
+    int64_t currentOffset;  /**< Our current offset in the StoreEntry */
+    MemBuf *responseBodyBuffer; /**< Data temporarily buffered for ICAP */
 
 public: // should not be
-    StoreEntry *entry = nullptr;
+    StoreEntry *entry;
     FwdState::Pointer fwd;
-    HttpRequestPointer request;
+    HttpRequest *request;
 
 protected:
     BodyPipe::Pointer requestBodySource;  /**< to consume request body */
@@ -174,21 +168,21 @@ protected:
     CbcPointer<Adaptation::Initiate> adaptedHeadSource;  /**< to get adapted response headers */
     BodyPipe::Pointer adaptedBodySource;      /**< to consume adated response body */
 
-    bool adaptationAccessCheckPending = false;
-    bool startedAdaptation = false;
+    bool adaptationAccessCheckPending;
+    bool startedAdaptation;
 #endif
-    bool receivedWholeRequestBody = false; ///< handleRequestBodyProductionEnded called
+    bool receivedWholeRequestBody; ///< handleRequestBodyProductionEnded called
 
     /// whether we should not be talking to FwdState; XXX: clear fwd instead
     /// points to a string literal which is used only for debugging
-    const char *doneWithFwd = nullptr;
+    const char *doneWithFwd;
 
 private:
     void sendBodyIsTooLargeError();
     void maybePurgeOthers();
 
-    HttpReply *theVirginReply = nullptr;       /**< reply received from the origin server */
-    HttpReply *theFinalReply = nullptr;        /**< adapted reply from ICAP or virgin reply */
+    HttpReply *theVirginReply;       /**< reply received from the origin server */
+    HttpReply *theFinalReply;        /**< adapted reply from ICAP or virgin reply */
 };
 
 #endif /* SQUID_SRC_CLIENTS_CLIENT_H */

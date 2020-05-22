@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -9,6 +9,7 @@
 /* DEBUG: section 41    Event Processing */
 
 #include "squid.h"
+#include "compat/drand48.h"
 #include "event.h"
 #include "mgr/Registration.h"
 #include "profiler/Profiler.h"
@@ -17,7 +18,6 @@
 #include "tools.h"
 
 #include <cmath>
-#include <random>
 
 /* The list of event processes */
 
@@ -88,14 +88,10 @@ EventDialer::print(std::ostream &os) const
     os << ')';
 }
 
-ev_entry::ev_entry(char const * aName, EVH * aFunction, void * aArgument, double evWhen, int aWeight, bool haveArg) :
-    name(aName),
-    func(aFunction),
-    arg(haveArg ? cbdataReference(aArgument) : aArgument),
-    when(evWhen),
-    weight(aWeight),
-    cbdata(haveArg),
-    next(NULL)
+ev_entry::ev_entry(char const * aName, EVH * aFunction, void * aArgument, double evWhen,
+                   int aWeight, bool haveArgument) : name(aName), func(aFunction),
+    arg(haveArgument ? cbdataReference(aArgument) : aArgument), when(evWhen), weight(aWeight),
+    cbdata(haveArgument)
 {
 }
 
@@ -116,12 +112,12 @@ void
 eventAddIsh(const char *name, EVH * func, void *arg, double delta_ish, int weight)
 {
     if (delta_ish >= 3.0) {
-        // Default seed is fine. We just need values random enough
-        // relative to each other to prevent waves of synchronised activity.
-        static std::mt19937 rng;
-        auto third = (delta_ish/3.0);
-        xuniform_real_distribution<> thirdIsh(delta_ish - third, delta_ish + third);
-        delta_ish = thirdIsh(rng);
+        const double two_third = (2.0 * delta_ish) / 3.0;
+        delta_ish = two_third + (drand48() * two_third);
+        /*
+         * I'm sure drand48() isn't portable.  Tell me what function
+         * you have that returns a random double value in the range 0,1.
+         */
     }
 
     eventAdd(name, func, arg, delta_ish, weight);
@@ -223,7 +219,7 @@ EventScheduler::timeRemaining() const
 }
 
 int
-EventScheduler::checkEvents(int)
+EventScheduler::checkEvents(int timeout)
 {
     int result = timeRemaining();
     if (result != 0)

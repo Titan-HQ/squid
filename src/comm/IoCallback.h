@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -12,8 +12,9 @@
 #include "base/AsyncCall.h"
 #include "comm/Flag.h"
 #include "comm/forward.h"
-#include "mem/forward.h"
-#include "sbuf/forward.h"
+#include "typedefs.h"
+
+class SBuf;
 
 namespace Comm
 {
@@ -53,9 +54,8 @@ public:
 
     /// finish the IO operation imediately and schedule the callback with the current state.
     void finish(Comm::Flag code, int xerrn);
-
-private:
     void reset();
+
 };
 
 /// Entry nodes for the IO callback table: iocb_table

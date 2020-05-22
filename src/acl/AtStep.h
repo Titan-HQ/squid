@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -11,6 +11,7 @@
 
 #if USE_OPENSSL
 
+#include "acl/Strategised.h"
 #include "acl/Strategy.h"
 #include "ssl/support.h"
 
@@ -19,7 +20,25 @@ class ACLAtStepStrategy : public ACLStrategy<Ssl::BumpStep>
 {
 
 public:
-    virtual int match (ACLData<MatchType> * &, ACLFilledChecklist *) override;
+    virtual int match (ACLData<MatchType> * &, ACLFilledChecklist *, ACLFlags &);
+    static ACLAtStepStrategy *Instance();
+
+    // Not implemented to prevent copies of the instance.
+    ACLAtStepStrategy(ACLAtStepStrategy const &);
+
+private:
+    static ACLAtStepStrategy Instance_;
+    ACLAtStepStrategy() {}
+
+    ACLAtStepStrategy&operator=(ACLAtStepStrategy const &);
+};
+
+class ACLAtStep
+{
+
+private:
+    static ACL::Prototype RegistryProtoype;
+    static ACLStrategised<Ssl::BumpStep> RegistryEntry_;
 };
 
 #endif /* USE_OPENSSL */

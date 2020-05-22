@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -9,75 +9,85 @@
 #ifndef SQUID__TEXTEXCEPTION_H
 #define SQUID__TEXTEXCEPTION_H
 
-#include "base/Here.h"
+// Origin: xstd/TextException
 
-#include <stdexcept>
+#include <exception>
 
-class SBuf;
+static unsigned int FileNameHashCached(const char *fname);
 
-/// an std::runtime_error with thrower location info
-class TextException: public std::runtime_error
+// simple exception to report custom errors
+// we may want to change the interface to be able to report system errors
+
+class TextException: public std::exception
 {
 
 public:
-    TextException(const char *message, const SourceLocation &location):
-        std::runtime_error(message),
-        where(location)
-    {}
+    TextException();
+    TextException(const char *aMessage, const char *aFileName = 0, int aLineNo = -1, unsigned int anId =0);
+    TextException(const TextException& right);
+    virtual ~TextException() throw();
 
-    TextException(SBuf message, const SourceLocation &location);
+    // unique exception ID for transaction error detail logging
+    unsigned int id() const { return theId; }
 
-    TextException(const TextException &) = default;
-    TextException(TextException &&) = default;
-    TextException& operator=(const TextException &) = default;
+    virtual const char *what() const throw();
 
-    /* std::runtime_error API */
-    virtual ~TextException() throw() override;
-    virtual const char *what() const throw() override;
+    TextException& operator=(const TextException &right);
 
-    /// same-location exceptions have the same ID
-    SourceLocationId id() const { return where.id(); }
+public:
+    char *message; // read-only
 
-    /// dumps the exception text into the stream
-    std::ostream &print(std::ostream &) const;
+protected:
+    /// a small integer hash value to semi-uniquely identify the source file
+    static unsigned int FileNameHash(const char *fname);
 
-    /// code location related to the exception; usually the thrower location
-    SourceLocation where;
+    // optional location information
+    const char *theFileName;
+    int theLineNo;
+    unsigned int theId;
 
-    // TODO: Add support for arbitrary (re)thrower-supplied details:
-    // std::tuple<Details...> details;
+    friend unsigned int FileNameHashCached(const char *fname);
 };
 
-/// prints active (i.e., thrown but not yet handled) exception
-std::ostream &CurrentException(std::ostream &);
+//inline
+//ostream &operator <<(ostream &os, const TextException &exx) {
+//    return exx.print(os);
+//}
 
-/// legacy convenience macro; it is not difficult to type Here() now
-#define TexcHere(msg) TextException((msg), Here())
-
-/// Like assert() but throws an exception instead of aborting the process
-/// and allows the caller to specify a custom exception message.
-#define Must2(condition, message) \
-    do { \
-        if (!(condition)) { \
-            const TextException Must_ex_((message), Here()); \
-            debugs(0, 3, Must_ex_.what()); \
-            throw Must_ex_; \
-        } \
-    } while (/*CONSTCOND*/ false)
-
-/// Like assert() but throws an exception instead of aborting the process.
-#define Must(condition) Must2((condition), "check failed: " #condition)
-
-/// Reports and swallows all exceptions to prevent compiler warnings and runtime
-/// errors related to throwing class destructors. Should be used for most dtors.
-#define SWALLOW_EXCEPTIONS(code) \
-    try { \
-        code \
-    } catch (...) { \
-        debugs(0, DBG_IMPORTANT, "BUG: ignoring exception;\n" << \
-               "    bug location: " << Here() << "\n" << \
-               "    ignored exception: " << CurrentException); \
+/// caches the result of FileNameHash() for each translation unit
+static unsigned int
+FileNameHashCached(const char *fname)
+{
+    static const char *lastFname = 0;
+    static int lastHash = 0;
+    // __FILE__ changes when we #include files
+    if (lastFname != fname) { // cheap pointer comparison
+        lastFname = fname;
+        lastHash = TextException::FileNameHash(fname);
     }
+    return lastHash;
+}
+
+///  Avoids "defined but not used" warnings for FileNameHashCached
+class FileNameHashCacheUser
+{
+    bool use(void *ptr=NULL) { return ptr != (void*)&FileNameHashCached; }
+};
+
+#if !defined(TexcHere)
+#    define TexcHere(msg) TextException((msg), __FILE__, __LINE__, \
+                                         (FileNameHashCached(__FILE__)<<14) | (__LINE__ & 0x3FFF))
+#endif
+
+void Throw(const char *message, const char *fileName, int lineNo, unsigned int id);
+
+// Must(condition) is like assert(condition) but throws an exception instead
+#if !defined(Must)
+#   define Must(cond) ((cond) ? \
+        (void)0 : \
+                      (void)Throw(#cond, __FILE__, __LINE__, \
+                                  (FileNameHashCached(__FILE__)<<14) | (__LINE__ & 0x3FFF)))
+#endif
 
 #endif /* SQUID__TEXTEXCEPTION_H */
 

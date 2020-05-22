@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -11,6 +11,7 @@
 #include "squid.h"
 #include "acl/FilledChecklist.h"
 #include "acl/MaxConnection.h"
+#include "cache_cf.h"
 #include "client_db.h"
 #include "Debug.h"
 #include "SquidConfig.h"
@@ -51,7 +52,7 @@ ACLMaxConnection::valid () const
 void
 ACLMaxConnection::parse()
 {
-    char *t = ConfigParser::strtokFile();
+    char *t = strtokFile();
 
     if (!t)
         return;
@@ -61,7 +62,7 @@ ACLMaxConnection::parse()
     /* suck out file contents */
     // ignore comments
     bool ignore = false;
-    while ((t = ConfigParser::strtokFile())) {
+    while ((t = strtokFile())) {
         ignore |= (*t != '#');
 
         if (ignore)

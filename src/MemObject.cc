@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -13,6 +13,7 @@
 #include "Generic.h"
 #include "globals.h"
 #include "HttpReply.h"
+#include "HttpRequest.h"
 #include "MemBuf.h"
 #include "MemObject.h"
 #include "profiler/Profiler.h"
@@ -76,11 +77,7 @@ MemObject::hasUris() const
 void
 MemObject::setUris(char const *aStoreId, char const *aLogUri, const HttpRequestMethod &aMethod)
 {
-    if (hasUris())
-        return;
-
     storeId_ = aStoreId;
-    debugs(88, 3, this << " storeId: " << storeId_);
 
     // fast pointer comparison for a common storeCreateEntry(url,url,...) case
     if (!aLogUri || aLogUri == aStoreId)
@@ -95,17 +92,22 @@ MemObject::setUris(char const *aStoreId, char const *aLogUri, const HttpRequestM
 #endif
 }
 
-MemObject::MemObject()
+MemObject::MemObject(): smpCollapsed(false)
 {
-    debugs(20, 3, "MemObject constructed, this=" << this);
-    ping_reply_callback = nullptr;
-    memset(&start_ping, 0, sizeof(start_ping));
-    reply_ = new HttpReply;
+    debugs(20, 3, HERE << "new MemObject " << this);
+    _reply = new HttpReply;
+    HTTPMSGLOCK(_reply);
+
+    object_sz = -1;
+
+    /* XXX account log_url */
+
+    swapout.decision = SwapOut::swNeedsCheck;
 }
 
 MemObject::~MemObject()
 {
-    debugs(20, 3, "MemObject destructed, this=" << this);
+    debugs(20, 3, HERE << "del MemObject " << this);
     const Ctx ctx = ctx_enter(hasUris() ? urlXXX() : "[unknown_ctx]");
 
 #if URL_CHECKSUM_DEBUG
@@ -129,7 +131,17 @@ MemObject::~MemObject()
 
 #endif
 
+    HTTPMSGUNLOCK(_reply);
+
+    HTTPMSGUNLOCK(request);
+
     ctx_exit(ctx);              /* must exit before we free mem->url */
+}
+
+void
+MemObject::unlinkRequest()
+{
+    HTTPMSGUNLOCK(request);
 }
 
 void
@@ -160,10 +172,24 @@ MemObject::dump() const
     debugs(20, DBG_IMPORTANT, "MemObject->inmem_hi: " << data_hdr.endOffset());
     debugs(20, DBG_IMPORTANT, "MemObject->inmem_lo: " << inmem_lo);
     debugs(20, DBG_IMPORTANT, "MemObject->nclients: " << nclients);
-    debugs(20, DBG_IMPORTANT, "MemObject->reply: " << reply_);
+    debugs(20, DBG_IMPORTANT, "MemObject->reply: " << _reply);
     debugs(20, DBG_IMPORTANT, "MemObject->request: " << request);
     debugs(20, DBG_IMPORTANT, "MemObject->logUri: " << logUri_);
     debugs(20, DBG_IMPORTANT, "MemObject->storeId: " << storeId_);
+}
+
+HttpReply const *
+MemObject::getReply() const
+{
+    return _reply;
+}
+
+void
+MemObject::replaceHttpReply(HttpReply *newrep)
+{
+    HTTPMSGUNLOCK(_reply);
+    _reply = newrep;
+    HTTPMSGLOCK(_reply);
 }
 
 struct LowestMemReader : public unary_function<store_client, void> {
@@ -192,22 +218,28 @@ struct StoreClientStats : public unary_function<store_client, void> {
 void
 MemObject::stat(MemBuf * mb) const
 {
-    mb->appendf("\t" SQUIDSBUFPH " %s\n", SQUIDSBUFPRINT(method.image()), logUri());
+    mb->Printf("\t" SQUIDSBUFPH " %s\n", SQUIDSBUFPRINT(method.image()), logUri());
     if (!vary_headers.isEmpty())
-        mb->appendf("\tvary_headers: " SQUIDSBUFPH "\n", SQUIDSBUFPRINT(vary_headers));
-    mb->appendf("\tinmem_lo: %" PRId64 "\n", inmem_lo);
-    mb->appendf("\tinmem_hi: %" PRId64 "\n", data_hdr.endOffset());
-    mb->appendf("\tswapout: %" PRId64 " bytes queued\n", swapout.queue_offset);
+        mb->Printf("\tvary_headers: " SQUIDSBUFPH "\n", SQUIDSBUFPRINT(vary_headers));
+    mb->Printf("\tinmem_lo: %" PRId64 "\n", inmem_lo);
+    mb->Printf("\tinmem_hi: %" PRId64 "\n", data_hdr.endOffset());
+    mb->Printf("\tswapout: %" PRId64 " bytes queued\n",
+               swapout.queue_offset);
 
     if (swapout.sio.getRaw())
-        mb->appendf("\tswapout: %" PRId64 " bytes written\n", (int64_t) swapout.sio->offset());
+        mb->Printf("\tswapout: %" PRId64 " bytes written\n",
+                   (int64_t) swapout.sio->offset());
 
     if (xitTable.index >= 0)
-        mb->appendf("\ttransient index: %d state: %d\n", xitTable.index, xitTable.io);
+        mb->Printf("\ttransient index: %d state: %d\n",
+                   xitTable.index, xitTable.io);
     if (memCache.index >= 0)
-        mb->appendf("\tmem-cache index: %d state: %d offset: %" PRId64 "\n", memCache.index, memCache.io, memCache.offset);
+        mb->Printf("\tmem-cache index: %d state: %d offset: %" PRId64 "\n",
+                   memCache.index, memCache.io, memCache.offset);
     if (object_sz >= 0)
-        mb->appendf("\tobject_sz: %" PRId64 "\n", object_sz);
+        mb->Printf("\tobject_sz: %" PRId64 "\n", object_sz);
+    if (smpCollapsed)
+        mb->Printf("\tsmp-collapsed\n");
 
     StoreClientStats statsVisitor(mb);
 
@@ -225,8 +257,8 @@ MemObject::markEndOfReplyHeaders()
 {
     const int hdr_sz = endOffset();
     assert(hdr_sz >= 0);
-    assert(reply_);
-    reply_->hdr_sz = hdr_sz;
+    assert(_reply);
+    _reply->hdr_sz = hdr_sz;
 }
 
 int64_t
@@ -241,15 +273,15 @@ MemObject::size() const
 int64_t
 MemObject::expectedReplySize() const
 {
-    debugs(20, 7, "object_sz: " << object_sz);
+    debugs(20, 7, HERE << "object_sz: " << object_sz);
     if (object_sz >= 0) // complete() has been called; we know the exact answer
         return object_sz;
 
-    if (reply_) {
-        const int64_t clen = reply_->bodySize(method);
-        debugs(20, 7, "clen: " << clen);
-        if (clen >= 0 && reply_->hdr_sz > 0) // yuck: Http::Message sets hdr_sz to 0
-            return clen + reply_->hdr_sz;
+    if (_reply) {
+        const int64_t clen = _reply->bodySize(method);
+        debugs(20, 7, HERE << "clen: " << clen);
+        if (clen >= 0 && _reply->hdr_sz > 0) // yuck: HttpMsg sets hdr_sz to 0
+            return clen + _reply->hdr_sz;
     }
 
     return -1; // not enough information to predict
@@ -262,8 +294,6 @@ MemObject::reset()
     data_hdr.freeContent();
     inmem_lo = 0;
     /* Should we check for clients? */
-    if (reply_)
-        reply_->reset();
 }
 
 int64_t
@@ -427,14 +457,6 @@ MemObject::setNoDelay(bool const newValue)
 void
 MemObject::delayRead(DeferredRead const &aRead)
 {
-#if USE_DELAY_POOLS
-    if (readAheadPolicyCanRead()) {
-        if (DelayId mostAllowedId = mostBytesAllowed()) {
-            mostAllowedId.delayRead(aRead);
-            return;
-        }
-    }
-#endif
     deferredReads.delayRead(aRead);
 }
 

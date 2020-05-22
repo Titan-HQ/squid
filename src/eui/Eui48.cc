@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -20,7 +20,7 @@
 #include <cerrno>
 
 /* START Legacy includes pattern */
-/* TODO: clean this up so we do not have per-OS requirements.
+/* TODO: clean this up so we dont have per-OS requirements.
          The files are checked for existence individually
          and can be wrapped
  */
@@ -148,8 +148,7 @@ Eui::Eui48::lookup(const Ip::Address &c)
     /* IPv6 builds do not provide the first http_port as an IPv4 socket for ARP */
     int tmpSocket = socket(AF_INET,SOCK_STREAM,0);
     if (tmpSocket < 0) {
-        int xerrno = errno;
-        debugs(28, DBG_IMPORTANT, "Attempt to open socket for EUI retrieval failed: " << xstrerr(xerrno));
+        debugs(28, DBG_IMPORTANT, "Attempt to open socket for EUI retrieval failed: " << xstrerror());
         clear();
         return false;
     }
@@ -205,8 +204,7 @@ Eui::Eui48::lookup(const Ip::Address &c)
     ifc.ifc_buf = (char *)ifbuffer;
 
     if (ioctl(tmpSocket, SIOCGIFCONF, &ifc) < 0) {
-        int xerrno = errno;
-        debugs(28, DBG_IMPORTANT, "Attempt to retrieve interface list failed: " << xstrerr(xerrno));
+        debugs(28, DBG_IMPORTANT, "Attempt to retrieve interface list failed: " << xstrerror());
         clear();
         close(tmpSocket);
         return false;
@@ -251,10 +249,17 @@ Eui::Eui48::lookup(const Ip::Address &c)
 
         /* Query ARP table */
         if (-1 == ioctl(tmpSocket, SIOCGARP, &arpReq)) {
-            int xerrno = errno;
-            //  Query failed.  Do not log failed lookups or "device not supported"
-            if (ENXIO != xerrno && ENODEV != xerrno)
-                debugs(28, DBG_IMPORTANT, "ARP query " << ipAddr << " failed: " << ifr->ifr_name << ": " << xstrerr(xerrno));
+            /*
+             * Query failed.  Do not log failed lookups or "device
+             * not supported"
+             */
+
+            if (ENXIO == errno)
+                (void) 0;
+            else if (ENODEV == errno)
+                (void) 0;
+            else
+                debugs(28, DBG_IMPORTANT, "ARP query " << ipAddr << " failed: " << ifr->ifr_name << ": " << xstrerror());
 
             continue;
         }
@@ -293,8 +298,7 @@ Eui::Eui48::lookup(const Ip::Address &c)
     /* IPv6 builds do not provide the first http_port as an IPv4 socket for ARP */
     int tmpSocket = socket(AF_INET,SOCK_STREAM,0);
     if (tmpSocket < 0) {
-        int xerrno = errno;
-        debugs(28, DBG_IMPORTANT, "Attempt to open socket for EUI retrieval failed: " << xstrerr(xerrno));
+        debugs(28, DBG_IMPORTANT, "Attempt to open socket for EUI retrieval failed: " << xstrerror());
         clear();
         return false;
     }

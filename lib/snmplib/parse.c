@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -1089,9 +1089,8 @@ read_mib(char *filename) {
     char *p;
 
     fp = fopen(filename, "r");
-    if (!fp) {
-        int xerrno = errno;
-        snmplib_debug(1, "init_mib: %s: %s\n", filename, xstrerr(xerrno));
+    if (fp == NULL) {
+        snmplib_debug(1, "init_mib: %s: %s\n", filename, xstrerror());
         return (NULL);
     }
     mbuf[0] = '\0';

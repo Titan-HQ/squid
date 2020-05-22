@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -18,39 +18,64 @@
 #include "acl/Acl.h"
 #include "acl/Checklist.h"
 #include "acl/RegexData.h"
-#include "base/RegexPattern.h"
 #include "ConfigParser.h"
 #include "Debug.h"
-#include "sbuf/Algorithms.h"
-#include "sbuf/List.h"
+#include "Mem.h"
+#include "RegexList.h"
+#include "wordlist.h"
+
+static void
+aclDestroyRegexList(RegexList * data)
+{
+    RegexList *next = NULL;
+
+    for (; data; data = next) {
+        next = data->next;
+        regfree(&data->regex);
+        safe_free(data->pattern);
+        memFree(data, MEM_RELIST);
+    }
+}
 
 ACLRegexData::~ACLRegexData()
 {
-}
-
-const Acl::ParameterFlags &
-ACLRegexData::supportedFlags() const
-{
-    static const Acl::ParameterFlags flags = { "-i", "+i" };
-    return flags;
+    aclDestroyRegexList(data);
 }
 
 bool
 ACLRegexData::match(char const *word)
 {
-    if (!word)
+    if (word == NULL)
         return 0;
 
-    debugs(28, 3, "checking '" << word << "'");
+    debugs(28, 3, "aclRegexData::match: checking '" << word << "'");
 
-    // walk the list of patterns to see if one matches
-    for (auto &i : data) {
-        if (i.match(word)) {
-            debugs(28, 2, '\'' << i.c_str() << "' found in '" << word << '\'');
-            // TODO: old code also popped the pattern to second place of the list
-            // in order to reduce patterns search times.
+    RegexList *first, *prev;
+
+    first = data;
+
+    prev = NULL;
+
+    RegexList *current = first;
+
+    while (current) {
+        debugs(28, 3, "aclRegexData::match: looking for '" << current->pattern << "'");
+
+        if (regexec(&current->regex, word, 0, 0, 0) == 0) {
+            if (prev != NULL) {
+                /* shift the element just found to the second position
+                 * in the list */
+                prev->next = current->next;
+                current->next = first->next;
+                first->next = current;
+            }
+
+            debugs(28, 2, "aclRegexData::match: match '" << current->pattern << "' found in '" << word << "'");
             return 1;
         }
+
+        prev = current;
+        current = current->next;
     }
 
     return 0;
@@ -60,21 +85,21 @@ SBufList
 ACLRegexData::dump() const
 {
     SBufList sl;
+    RegexList *temp = data;
     int flags = REG_EXTENDED | REG_NOSUB;
 
-    // walk and dump the list
-    // keeping the flags values consistent
-    for (auto &i : data) {
-        if (i.flags != flags) {
-            if ((i.flags&REG_ICASE) != 0) {
-                sl.emplace_back("-i");
+    while (temp != NULL) {
+        if (temp->flags != flags) {
+            if ((temp->flags&REG_ICASE) != 0) {
+                sl.push_back(SBuf("-i"));
             } else {
-                sl.emplace_back("+i");
+                sl.push_back(SBuf("+i"));
             }
-            flags = i.flags;
+            flags = temp->flags;
         }
 
-        sl.emplace_back(i.c_str());
+        sl.push_back(SBuf(temp->pattern));
+        temp = temp->next;
     }
 
     return sl;
@@ -96,122 +121,146 @@ removeUnnecessaryWildcards(char * t)
     }
 
     if (*t == '\0') {
-        debugs(28, DBG_IMPORTANT, cfg_filename << " line " << config_lineno << ": " << config_input_line);
+        debugs(28, DBG_IMPORTANT, "" << cfg_filename << " line " << config_lineno << ": " << config_input_line);
         debugs(28, DBG_IMPORTANT, "WARNING: regular expression '" << orig << "' has only wildcards and matches all strings. Using '.*' instead.");
         return ".*";
     }
     if (t != orig) {
-        debugs(28, DBG_IMPORTANT, cfg_filename << " line " << config_lineno << ": " << config_input_line);
+        debugs(28, DBG_IMPORTANT, "" << cfg_filename << " line " << config_lineno << ": " << config_input_line);
         debugs(28, DBG_IMPORTANT, "WARNING: regular expression '" << orig << "' has unnecessary wildcard(s). Using '" << t << "' instead.");
     }
 
     return t;
 }
 
-static bool
-compileRE(std::list<RegexPattern> &curlist, const char * RE, int flags)
+static RegexList **
+compileRE(RegexList **Tail, char * RE, int flags)
 {
-    if (RE == NULL || *RE == '\0')
-        return curlist.empty(); // XXX: old code did this. It looks wrong.
-
+    int errcode;
+    RegexList *q;
     regex_t comp;
-    if (int errcode = regcomp(&comp, RE, flags)) {
+
+    if (RE == NULL  ||  *RE == '\0')
+        return Tail;
+
+    if ((errcode = regcomp(&comp, RE, flags)) != 0) {
         char errbuf[256];
         regerror(errcode, &comp, errbuf, sizeof errbuf);
-        debugs(28, DBG_CRITICAL, cfg_filename << " line " << config_lineno << ": " << config_input_line);
+        debugs(28, DBG_CRITICAL, "" << cfg_filename << " line " << config_lineno << ": " << config_input_line);
         debugs(28, DBG_CRITICAL, "ERROR: invalid regular expression: '" << RE << "': " << errbuf);
-        return false;
+        return NULL;
     }
-    debugs(28, 2, "compiled '" << RE << "' with flags " << flags);
+    debugs(28, 2, "compileRE: compiled '" << RE << "' with flags " << flags );
 
-    curlist.emplace_back(flags, RE);
-    curlist.back().regex = comp;
+    q = (RegexList *) memAllocate(MEM_RELIST);
+    q->pattern = xstrdup(RE);
+    q->regex = comp;
+    q->flags = flags;
+    *(Tail) = q;
+    Tail = &q->next;
 
-    return true;
-}
-
-static bool
-compileRE(std::list<RegexPattern> &curlist, const SBufList &RE, int flags)
-{
-    if (RE.empty())
-        return curlist.empty(); // XXX: old code did this. It looks wrong.
-    SBuf regexp;
-    static const SBuf openparen("("), closeparen(")"), separator(")|(");
-    JoinContainerIntoSBuf(regexp, RE.begin(), RE.end(), separator, openparen,
-                          closeparen);
-    return compileRE(curlist, regexp.c_str(), flags);
+    return Tail;
 }
 
 /** Compose and compile one large RE from a set of (small) REs.
- * The ultimate goal is to have only one RE per ACL so that match() is
+ * The ultimate goal is to have only one RE per ACL so that regexec() is
  * called only once per ACL.
  */
 static int
-compileOptimisedREs(std::list<RegexPattern> &curlist, const SBufList &sl)
+compileOptimisedREs(RegexList **curlist, wordlist * wl)
 {
-    std::list<RegexPattern> newlist;
-    SBufList accumulatedRE;
-    int numREs = 0, reSize = 0;
+    RegexList **Tail;
+    RegexList *newlist;
+    RegexList **newlistp;
+    int numREs = 0;
     int flags = REG_EXTENDED | REG_NOSUB;
+    int largeREindex = 0;
+    char largeRE[BUFSIZ];
 
-    for (const SBuf & configurationLineWord : sl) {
-        static const SBuf minus_i("-i");
-        static const SBuf plus_i("+i");
-        if (configurationLineWord == minus_i) {
+    newlist = NULL;
+    newlistp = &newlist;
+
+    largeRE[0] = '\0';
+
+    while (wl != NULL) {
+        int RElen;
+        RElen = strlen( wl->key );
+
+        if (strcmp(wl->key, "-i") == 0) {
             if (flags & REG_ICASE) {
                 /* optimisation of  -i ... -i */
-                debugs(28, 2, "optimisation of -i ... -i" );
+                debugs(28, 2, "compileOptimisedREs: optimisation of -i ... -i" );
             } else {
-                debugs(28, 2, "-i" );
-                if (!compileRE(newlist, accumulatedRE, flags))
+                debugs(28, 2, "compileOptimisedREs: -i" );
+                newlistp = compileRE( newlistp, largeRE, flags );
+                if (newlistp == NULL) {
+                    aclDestroyRegexList( newlist );
                     return 0;
+                }
                 flags |= REG_ICASE;
-                accumulatedRE.clear();
-                reSize = 0;
+                largeRE[largeREindex=0] = '\0';
             }
-            continue;
-        } else if (configurationLineWord == plus_i) {
+        } else if (strcmp(wl->key, "+i") == 0) {
             if ((flags & REG_ICASE) == 0) {
                 /* optimisation of  +i ... +i */
-                debugs(28, 2, "optimisation of +i ... +i");
+                debugs(28, 2, "compileOptimisedREs: optimisation of +i ... +i");
             } else {
-                debugs(28, 2, "+i");
-                if (!compileRE(newlist, accumulatedRE, flags))
+                debugs(28, 2, "compileOptimisedREs: +i");
+                newlistp = compileRE( newlistp, largeRE, flags );
+                if (newlistp == NULL) {
+                    aclDestroyRegexList( newlist );
                     return 0;
+                }
                 flags &= ~REG_ICASE;
-                accumulatedRE.clear();
-                reSize = 0;
+                largeRE[largeREindex=0] = '\0';
             }
-            continue;
-        }
-
-        debugs(28, 2, "adding RE '" << configurationLineWord << "'");
-        accumulatedRE.push_back(configurationLineWord);
-        ++numREs;
-        reSize += configurationLineWord.length();
-
-        if (reSize > 1024) { // must be < BUFSIZ everything included
-            debugs(28, 2, "buffer full, generating new optimised RE..." );
-            if (!compileRE(newlist, accumulatedRE, flags))
+        } else if (RElen + largeREindex + 3 < BUFSIZ-1) {
+            debugs(28, 2, "compileOptimisedREs: adding RE '" << wl->key << "'");
+            if (largeREindex > 0) {
+                largeRE[largeREindex] = '|';
+                ++largeREindex;
+            }
+            largeRE[largeREindex] = '(';
+            ++largeREindex;
+            for (char * t = wl->key; *t != '\0'; ++t) {
+                largeRE[largeREindex] = *t;
+                ++largeREindex;
+            }
+            largeRE[largeREindex] = ')';
+            ++largeREindex;
+            largeRE[largeREindex] = '\0';
+            ++numREs;
+        } else {
+            debugs(28, 2, "compileOptimisedREs: buffer full, generating new optimised RE..." );
+            newlistp = compileRE( newlistp, largeRE, flags );
+            if (newlistp == NULL) {
+                aclDestroyRegexList( newlist );
                 return 0;
-            accumulatedRE.clear();
-            reSize = 0;
+            }
+            largeRE[largeREindex=0] = '\0';
             continue;    /* do the loop again to add the RE to largeRE */
         }
+        wl = wl->next;
     }
 
-    if (!compileRE(newlist, accumulatedRE, flags))
+    newlistp = compileRE( newlistp, largeRE, flags );
+    if (newlistp == NULL) {
+        aclDestroyRegexList( newlist );
         return 0;
-
-    accumulatedRE.clear();
-    reSize = 0;
+    }
 
     /* all was successful, so put the new list at the tail */
-    curlist.splice(curlist.end(), newlist);
+    if (*curlist == NULL) {
+        *curlist = newlist;
+    } else {
+        for (Tail = curlist; *Tail != NULL; Tail = &((*Tail)->next))
+            ;
+        (*Tail) = newlist;
+    }
 
-    debugs(28, 2, numREs << " REs are optimised into one RE.");
+    debugs(28, 2, "compileOptimisedREs: " << numREs << " REs are optimised into one RE.");
     if (numREs > 100) {
-        debugs(28, (opt_parse_cfg_only?DBG_IMPORTANT:2), cfg_filename << " line " << config_lineno << ": " << config_input_line);
+        debugs(28, (opt_parse_cfg_only?DBG_IMPORTANT:2), "" << cfg_filename << " line " << config_lineno << ": " << config_input_line);
         debugs(28, (opt_parse_cfg_only?DBG_IMPORTANT:2), "WARNING: there are more than 100 regular expressions. " <<
                "Consider using less REs or use rules without expressions like 'dstdomain'.");
     }
@@ -220,58 +269,75 @@ compileOptimisedREs(std::list<RegexPattern> &curlist, const SBufList &sl)
 }
 
 static void
-compileUnoptimisedREs(std::list<RegexPattern> &curlist, const SBufList &sl)
+compileUnoptimisedREs(RegexList **curlist, wordlist * wl)
 {
+    RegexList **Tail;
+    RegexList **newTail;
     int flags = REG_EXTENDED | REG_NOSUB;
 
-    static const SBuf minus_i("-i"), plus_i("+i");
-    for (auto configurationLineWord : sl) {
-        if (configurationLineWord == minus_i) {
+    for (Tail = curlist; *Tail != NULL; Tail = &((*Tail)->next))
+        ;
+
+    while (wl != NULL) {
+        if (strcmp(wl->key, "-i") == 0) {
             flags |= REG_ICASE;
-        } else if (configurationLineWord == plus_i) {
+        } else if (strcmp(wl->key, "+i") == 0) {
             flags &= ~REG_ICASE;
         } else {
-            if (!compileRE(curlist, configurationLineWord.c_str(), flags))
-                debugs(28, DBG_CRITICAL, "ERROR: Skipping regular expression. "
-                       "Compile failed: '" << configurationLineWord << "'");
+            newTail = compileRE( Tail, wl->key , flags );
+            if (newTail == NULL)
+                debugs(28, DBG_CRITICAL, "ERROR: Skipping regular expression. Compile failed: '" << wl->key << "'");
+            else
+                Tail = newTail;
+        }
+        wl = wl->next;
+    }
+}
+
+static void
+aclParseRegexList(RegexList **curlist)
+{
+    char *t;
+    wordlist *wl = NULL;
+
+    debugs(28, 2, HERE << "aclParseRegexList: new Regex line or file");
+
+    while ((t = ConfigParser::RegexStrtokFile()) != NULL) {
+        const char *clean = removeUnnecessaryWildcards(t);
+        if (strlen(clean) > BUFSIZ-1) {
+            debugs(28, DBG_CRITICAL, "" << cfg_filename << " line " << config_lineno << ": " << config_input_line);
+            debugs(28, DBG_CRITICAL, "ERROR: Skipping regular expression. Larger than " << BUFSIZ-1 << " characters: '" << clean << "'");
+        } else {
+            debugs(28, 3, "aclParseRegexList: buffering RE '" << clean << "'");
+            wordlistAdd(&wl, clean);
         }
     }
+
+    if (!compileOptimisedREs(curlist, wl)) {
+        debugs(28, DBG_IMPORTANT, "WARNING: optimisation of regular expressions failed; using fallback method without optimisation");
+        compileUnoptimisedREs(curlist, wl);
+    }
+
+    wordlistDestroy(&wl);
 }
 
 void
 ACLRegexData::parse()
 {
-    debugs(28, 2, "new Regex line or file");
-
-    SBufList sl;
-    while (char *t = ConfigParser::RegexStrtokFile()) {
-        const char *clean = removeUnnecessaryWildcards(t);
-        if (strlen(clean) > BUFSIZ-1) {
-            debugs(28, DBG_CRITICAL, cfg_filename << " line " << config_lineno << ": " << config_input_line);
-            debugs(28, DBG_CRITICAL, "ERROR: Skipping regular expression. Larger than " << BUFSIZ-1 << " characters: '" << clean << "'");
-        } else {
-            debugs(28, 3, "buffering RE '" << clean << "'");
-            sl.emplace_back(clean);
-        }
-    }
-
-    if (!compileOptimisedREs(data, sl)) {
-        debugs(28, DBG_IMPORTANT, "WARNING: optimisation of regular expressions failed; using fallback method without optimisation");
-        compileUnoptimisedREs(data, sl);
-    }
+    aclParseRegexList(&data);
 }
 
 bool
 ACLRegexData::empty() const
 {
-    return data.empty();
+    return data == NULL;
 }
 
 ACLData<char const *> *
 ACLRegexData::clone() const
 {
     /* Regex's don't clone yet. */
-    assert(data.empty());
+    assert (!data);
     return new ACLRegexData;
 }
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -36,8 +36,6 @@ class HttpRequest;
  */
 class AuthUserIP
 {
-    MEMPROXY_CLASS(AuthUserIP);
-
 public:
     AuthUserIP(const Ip::Address &ip, time_t t) : ipaddr(ip), ip_expiretime(t) {}
 
@@ -51,7 +49,11 @@ public:
      * (user,IP) pair plus authenticate_ip_ttl seconds
      */
     time_t ip_expiretime;
+
+    MEMPROXY_CLASS(AuthUserIP);
 };
+
+MEMPROXY_CLASS_INLINE(AuthUserIP);
 
 // TODO: make auth schedule AsyncCalls?
 typedef void AUTHCB(void*);
@@ -126,7 +128,7 @@ public:
      */
     bool valid() const;
 
-    virtual void authenticate(HttpRequest * request, ConnStateData * conn, Http::HdrType type) = 0;
+    virtual void authenticate(HttpRequest * request, ConnStateData * conn, http_hdr_type type) = 0;
 
     /* template method - what needs to be done next? advertise schemes, challenge, handle error, nothing? */
     virtual Direction module_direction() = 0;
@@ -162,10 +164,10 @@ public:
      *
      * \return Some AUTH_ACL_* state
      */
-    static AuthAclState tryToAuthenticateAndSetAuthUser(UserRequest::Pointer *aUR, Http::HdrType, HttpRequest *, ConnStateData *, Ip::Address &, AccessLogEntry::Pointer &);
+    static AuthAclState tryToAuthenticateAndSetAuthUser(UserRequest::Pointer *aUR, http_hdr_type, HttpRequest *, ConnStateData *, Ip::Address &, AccessLogEntry::Pointer &);
 
     /// Add the appropriate [Proxy-]Authenticate header to the given reply
-    static void AddReplyAuthHeader(HttpReply * rep, UserRequest::Pointer auth_user_request, HttpRequest * request, int accelerated, int internal);
+    static void addReplyAuthHeader(HttpReply * rep, UserRequest::Pointer auth_user_request, HttpRequest * request, int accelerated, int internal);
 
     /** Start an asynchronous helper lookup to verify the user credentials
      *
@@ -179,13 +181,13 @@ public:
      */
     void start(HttpRequest *request, AccessLogEntry::Pointer &al, AUTHCB *handler, void *data);
 
-    char const * denyMessage(char const * const default_message = NULL) const;
+    char const * denyMessage(char const * const default_message = NULL);
 
     /** Possibly overrideable in future */
     void setDenyMessage(char const *);
 
     /** Possibly overrideable in future */
-    char const * getDenyMessage() const;
+    char const * getDenyMessage();
 
     /**
      * Squid does not make assumptions about where the username is stored.
@@ -195,7 +197,7 @@ public:
      \retval NULL   No username/usercode is known.
      \retval *      Null-terminated username string.
      */
-    char const *username() const;
+    virtual char const *username() const;
 
     Scheme::Pointer scheme() const;
 
@@ -208,9 +210,9 @@ public:
 
     const char *helperRequestKeyExtras(HttpRequest *, AccessLogEntry::Pointer &al);
 
-    /// Sets the reason of 'authentication denied' helper response.
-    void denyMessageFromHelper(char const *proto, const Helper::Reply &reply);
-
+    const AuthAclState get_lastReply(void) const{
+        return this->lastReply;
+    }
 protected:
     /**
      * The scheme-specific actions to be performed when sending helper lookup.
@@ -221,7 +223,8 @@ protected:
 
 private:
 
-    static AuthAclState authenticate(UserRequest::Pointer * auth_user_request, Http::HdrType headertype, HttpRequest * request, ConnStateData * conn, Ip::Address &src_addr, AccessLogEntry::Pointer &al);
+    static bool isKshieldAuth();
+    static AuthAclState authenticate(UserRequest::Pointer * auth_user_request, http_hdr_type headertype, HttpRequest * request, ConnStateData * conn, Ip::Address &src_addr, AccessLogEntry::Pointer &al);
 
     /** return a message on the 407 error pages */
     char *message;
@@ -237,6 +240,11 @@ private:
 } // namespace Auth
 
 /* AuthUserRequest */
+
+/// \ingroup AuthAPI
+void authenticateFixHeader(HttpReply *, Auth::UserRequest::Pointer, HttpRequest *, int, int);
+/// \ingroup AuthAPI
+void authenticateAddTrailer(HttpReply *, Auth::UserRequest::Pointer, HttpRequest *, int);
 
 /// \ingroup AuthAPI
 void authenticateAuthUserRequestRemoveIp(Auth::UserRequest::Pointer, Ip::Address const &);

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -517,7 +517,7 @@ int WIN32_Subsystem_Init(int * argc, char *** argv)
                 ConfigFile = static_cast<char *>(xmalloc(Size));
                 RegQueryValueEx(hndKey, CONFIGFILE, NULL, &Type, (unsigned char *)ConfigFile, &Size);
             } else
-                ConfigFile = xstrdup(DEFAULT_CONFIG_FILE);
+                ConfigFile = xstrdup(DefaultConfigFile);
 
             Size = 0;
 
@@ -533,7 +533,7 @@ int WIN32_Subsystem_Init(int * argc, char *** argv)
 
             RegCloseKey(hndKey);
         } else {
-            ConfigFile = xstrdup(DEFAULT_CONFIG_FILE);
+            ConfigFile = xstrdup(DefaultConfigFile);
             WIN32_Service_Command_Line = xstrdup("");
         }
 
@@ -734,7 +734,7 @@ WIN32_InstallService()
 
     if ((lenpath = GetModuleFileName(NULL, ServicePath, 512)) == 0) {
         fprintf(stderr, "Can't get executable path\n");
-        exit(EXIT_FAILURE);
+        exit(1);
     }
 
     snprintf(szPath, sizeof(szPath), "%s %s:" SQUIDSBUFPH, ServicePath, _WIN_SQUID_SERVICE_OPTION, SQUIDSBUFPRINT(service_name));
@@ -745,7 +745,7 @@ WIN32_InstallService()
 
     if (!schSCManager) {
         fprintf(stderr, "OpenSCManager failed\n");
-        exit(EXIT_FAILURE);
+        exit(1);
     } else {
         schService = CreateService(schSCManager,    /* SCManager database     */
                                    service,             /* name of service        */
@@ -778,7 +778,7 @@ WIN32_InstallService()
             /* Now store the config file location in the registry */
 
             if (!ConfigFile)
-                ConfigFile = xstrdup(DEFAULT_CONFIG_FILE);
+                ConfigFile = xstrdup(DefaultConfigFile);
 
             WIN32_StoreKey(CONFIGFILE, REG_SZ, (unsigned char *) ConfigFile, strlen(ConfigFile) + 1);
 
@@ -788,7 +788,7 @@ WIN32_InstallService()
             printf("Don't forget to edit squid.conf before starting it.\n\n");
         } else {
             fprintf(stderr, "CreateService failed\n");
-            exit(EXIT_FAILURE);
+            exit(1);
         }
 
         CloseServiceHandle(schSCManager);
@@ -813,7 +813,7 @@ WIN32_sendSignal(int WIN32_signal)
 
     if (!schSCManager) {
         fprintf(stderr, "OpenSCManager failed\n");
-        exit(EXIT_FAILURE);
+        exit(1);
     }
 
     /* The required service object access depends on the control. */
@@ -852,7 +852,7 @@ WIN32_sendSignal(int WIN32_signal)
         break;
 
     default:
-        exit(EXIT_FAILURE);
+        exit(1);
     }
 
     /* Open a handle to the service. */
@@ -862,7 +862,7 @@ WIN32_sendSignal(int WIN32_signal)
 
     if (schService == NULL) {
         fprintf(stderr, "%s: ERROR: Could not open Service " SQUIDSBUFPH "\n", APP_SHORTNAME, SQUIDSBUFPRINT(service_name));
-        exit(EXIT_FAILURE);
+        exit(1);
     } else {
         /* Send a control value to the service. */
 
@@ -871,7 +871,7 @@ WIN32_sendSignal(int WIN32_signal)
                             &ssStatus)) {   /* address of status info */
             fprintf(stderr, "%s: ERROR: Could not Control Service " SQUIDSBUFPH "\n",
                     APP_SHORTNAME, SQUIDSBUFPRINT(service_name));
-            exit(EXIT_FAILURE);
+            exit(1);
         } else {
             /* Print the service status. */
             printf("\nStatus of " SQUIDSBUFPH " Service:\n", SQUIDSBUFPRINT(service_name));

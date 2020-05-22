@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -16,41 +16,57 @@
 
 Snmp::Session::Session()
 {
-    memset(static_cast<snmp_session *>(this), 0, sizeof(snmp_session));
+    clear();
 }
 
-Snmp::Session::Session(const Snmp::Session& session) : Session()
+Snmp::Session::Session(const Session& session)
 {
-    operator =(session);
+    assign(session);
+}
+
+Snmp::Session::~Session()
+{
+    free();
 }
 
 Snmp::Session&
 Snmp::Session::operator = (const Session& session)
 {
-    if (&session == this)
-        return *this;
-
-    reset();
-    memcpy(static_cast<snmp_session *>(this), &session, sizeof(snmp_session));
-    // memcpy did a shallow copy, make sure we have our own allocations
-    if (session.community) {
-        community = (u_char*)xstrdup((char*)session.community);
-    }
-    if (session.peername) {
-        peername = xstrdup(session.peername);
-    }
+    free();
+    assign(session);
     return *this;
 }
 
 void
-Snmp::Session::reset()
+Snmp::Session::clear()
+{
+    memset(this, 0, sizeof(*this));
+}
+
+void
+Snmp::Session::free()
 {
     if (community_len > 0) {
         Must(community != NULL);
         xfree(community);
     }
-    xfree(peername);
-    memset(static_cast<snmp_session *>(this), 0, sizeof(snmp_session));
+    if (peername != NULL)
+        xfree(peername);
+    clear();
+}
+
+void
+Snmp::Session::assign(const Session& session)
+{
+    memcpy(this, &session, sizeof(*this));
+    if (session.community != NULL) {
+        community = (u_char*)xstrdup((char*)session.community);
+        Must(community != NULL);
+    }
+    if (session.peername != NULL) {
+        peername = xstrdup(session.peername);
+        Must(peername != NULL);
+    }
 }
 
 void
@@ -75,7 +91,7 @@ Snmp::Session::pack(Ipc::TypedMsgHdr& msg) const
 void
 Snmp::Session::unpack(const Ipc::TypedMsgHdr& msg)
 {
-    reset();
+    free();
     msg.getPod(Version);
     community_len = msg.getInt();
     if (community_len > 0) {

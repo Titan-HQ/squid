@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -31,10 +31,9 @@ CpuAffinitySet::apply()
 
     bool success = false;
     if (sched_getaffinity(0, sizeof(theOrigCpuSet), &theOrigCpuSet)) {
-        int xerrno = errno;
         debugs(54, DBG_IMPORTANT, "ERROR: failed to get CPU affinity for "
                "process PID " << getpid() << ", ignoring CPU affinity for "
-               "this process: " << xstrerr(xerrno));
+               "this process: " << xstrerror());
     } else {
         cpu_set_t cpuSet;
         memcpy(&cpuSet, &theCpuSet, sizeof(cpuSet));
@@ -44,9 +43,8 @@ CpuAffinitySet::apply()
                    "PID " << getpid() << ", may be caused by an invalid core in "
                    "'cpu_affinity_map' or by external affinity restrictions");
         } else if (sched_setaffinity(0, sizeof(cpuSet), &cpuSet)) {
-            int xerrno = errno;
             debugs(54, DBG_IMPORTANT, "ERROR: failed to set CPU affinity for "
-                   "process PID " << getpid() << ": " << xstrerr(xerrno));
+                   "process PID " << getpid() << ": " << xstrerror());
         } else
             success = true;
     }
@@ -59,10 +57,9 @@ CpuAffinitySet::undo()
 {
     if (applied()) {
         if (sched_setaffinity(0, sizeof(theOrigCpuSet), &theOrigCpuSet)) {
-            int xerrno = errno;
             debugs(54, DBG_IMPORTANT, "ERROR: failed to restore original CPU "
                    "affinity for process PID " << getpid() << ": " <<
-                   xstrerr(xerrno));
+                   xstrerror());
         }
         CPU_ZERO(&theOrigCpuSet);
     }

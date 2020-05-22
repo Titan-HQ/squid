@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -17,10 +17,8 @@ class testCharacterSet : public CPPUNIT_NS::TestFixture
     CPPUNIT_TEST( CharacterSetConstruction );
     CPPUNIT_TEST( CharacterSetAdd );
     CPPUNIT_TEST( CharacterSetAddRange );
-    CPPUNIT_TEST( CharacterSetEqualityOp );
     CPPUNIT_TEST( CharacterSetConstants );
     CPPUNIT_TEST( CharacterSetUnion );
-    CPPUNIT_TEST( CharacterSetSubtract );
     CPPUNIT_TEST_SUITE_END();
 
 protected:
@@ -29,8 +27,6 @@ protected:
     void CharacterSetAddRange();
     void CharacterSetConstants();
     void CharacterSetUnion();
-    void CharacterSetEqualityOp();
-    void CharacterSetSubtract();
 };
 
 #endif /* SQUID_BASE_TESTCHARACTERSET_H */

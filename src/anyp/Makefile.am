@@ -1,4 +1,4 @@
-## Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+## Copyright (C) 1996-2016 The Squid Software Foundation and contributors
 ##
 ## Squid software is distributed under GPLv2+ license and includes
 ## contributions from numerous individuals and organizations.
@@ -18,12 +18,11 @@ libanyp_la_SOURCES = \
 	ProtocolType.h \
 	ProtocolVersion.h \
 	TrafficMode.h \
-	Uri.cc \
-	Uri.h \
 	UriScheme.cc \
 	UriScheme.h
 
-ProtocolType.cc: ProtocolType.h $(top_srcdir)/src/mk-string-arrays.awk
-	($(AWK) -f $(top_srcdir)/src/mk-string-arrays.awk <$(srcdir)/ProtocolType.h | sed -e 's%PROTO_%%' >$@) || ($(RM) -f $@ && exit 1)
-
-CLEANFILES += ProtocolType.cc
+#disabled the autogeneration & autocleanup for ProtocolType.cc
+#ProtocolType.cc: ProtocolType.h $(top_srcdir)/src/mk-string-arrays.awk
+#	($(AWK) -f $(top_srcdir)/src/mk-string-arrays.awk <$(srcdir)/ProtocolType.h | sed -e 's%PROTO_%%' >$@) || ($(RM) -f $@ && exit 1)
+#
+#CLEANFILES += ProtocolType.cc

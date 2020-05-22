@@ -1,4 +1,4 @@
-## Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+## Copyright (C) 1996-2016 The Squid Software Foundation and contributors
 ##
 ## Squid software is distributed under GPLv2+ license and includes
 ## contributions from numerous individuals and organizations.
@@ -9,7 +9,7 @@ include $(top_srcdir)/src/Common.am
 include $(top_srcdir)/src/TestHeaders.am
 
 SUBDIRS = $(AUTH_MODULES)
-DIST_SUBDIRS = basic digest negotiate ntlm
+DIST_SUBDIRS = basic digest negotiate kshield ntlm
 
 noinst_LTLIBRARIES = libauth.la libacls.la
 ## not needed? $(AUTH_LIBS_TO_BUILD)
@@ -21,20 +21,13 @@ libauth_la_SOURCES = \
 	Type.cc \
 	Config.cc \
 	Config.h \
-	CredentialsCache.h \
-	CredentialsCache.cc \
 	CredentialState.cc \
 	CredentialState.h \
-	forward.h \
 	Gadgets.cc \
 	Gadgets.h \
 	QueueNode.h \
 	Scheme.cc \
 	Scheme.h \
-	SchemeConfig.cc \
-	SchemeConfig.h \
-	SchemesConfig.h \
-	SchemesConfig.cc \
 	State.h \
 	State.cc \
 	User.h \
@@ -54,6 +47,8 @@ libacls_la_SOURCES = \
 	AclMaxUserIp.h \
 	AclProxyAuth.cc \
 	AclProxyAuth.h \
+	AclTitanAuth.cc \
+	AclTitanAuth.h \
 	AuthAclState.h
 
 CredentialState.cc: CredentialState.h $(top_srcdir)/src/mk-string-arrays.awk

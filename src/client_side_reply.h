@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -21,7 +21,6 @@ class ErrorState;
 
 class clientReplyContext : public RefCountable, public StoreClient
 {
-    CBDATA_CLASS(clientReplyContext);
 
 public:
     static STCB CacheHit;
@@ -50,6 +49,15 @@ public:
     /// replaces current response store entry with the given one
     void setReplyToStoreEntry(StoreEntry *e, const char *reason);
     /// builds error using clientBuildError() and calls setReplyToError() below
+    // Titax. ????
+    void setReplyToError(err_type, Http::StatusCode, const HttpRequestMethod&, char const *, Ip::Address &, HttpRequest *, char *,
+#if USE_AUTH
+    Auth::UserRequest::Pointer,
+#else
+    void* unused,
+#endif
+    char* blocked_reason, char* safe_blocked_reason, char* utf8_uri);
+
     void setReplyToError(err_type, Http::StatusCode, const HttpRequestMethod&, char const *, Ip::Address &, HttpRequest *, const char *,
 #if USE_AUTH
                          Auth::UserRequest::Pointer);
@@ -68,16 +76,19 @@ public:
     clientStream_status_t replyStatus();
     void processMiss();
     void traceReply(clientStreamNode * node);
+    ///---------------------------------------------------------------------
+    ///TITAX ADDONS
+    ///---------------------------------------------------------------------
+    bool isRawPageReady;
+
+    ///---------------------------------------------------------------------
     const char *storeId() const { return (http->store_id.size() > 0 ? http->store_id.termedBuf() : http->uri); }
 
     Http::StatusCode purgeStatus;
 
     /* state variable - replace with class to handle storeentries at some point */
     int lookingforstore;
-
-    /* StoreClient API */
     virtual void created (StoreEntry *newEntry);
-    virtual LogTags *loggingTags();
 
     ClientHttpRequest *http;
     int headers_sz;
@@ -86,25 +97,22 @@ public:
     int old_reqsize;        /* ... again, for the buffer */
     size_t reqsize;
     size_t reqofs;
-    char tempbuf[HTTP_REQBUF_SZ];   ///< a temporary buffer if we need working storage
+    char tempbuf[HTTP_REQBUF_SZ];   /* a temporary buffer if we need working storage */
 #if USE_CACHE_DIGESTS
 
     const char *lookup_type;    /* temporary hack: storeGet() result: HIT/MISS/NONE */
 #endif
 
-    struct Flags {
-        Flags() : storelogiccomplete(0), complete(0), headersSent(false) {}
+    struct {
 
         unsigned storelogiccomplete:1;
-        unsigned complete:1;        ///< we have read all we can from upstream
+
+        unsigned complete:1;        /* we have read all we can from upstream */
         bool headersSent;
     } flags;
     clientStreamNode *ourNode;  /* This will go away if/when this file gets refactored some more */
 
 private:
-    /* StoreClient API */
-    virtual void fillChecklist(ACLFilledChecklist &) const;
-
     clientStreamNode *getNextNode() const;
     void makeThisHead();
     bool errorInStream(StoreIOBuffer const &result, size_t const &sizeToProcess)const ;
@@ -145,12 +153,14 @@ private:
     bool deleting;
 
     typedef enum {
-        crNone = 0, ///< collapsed revalidation is not allowed for this context
-        crInitiator, ///< we initiated collapsed revalidation request
-        crSlave ///< we collapsed on the existing revalidation request
+	crNone = 0, ///< collapsed revalidation is not allowed for this context
+	crInitiator, ///< we initiated collapsed revalidation request
+	crSlave ///< we collapsed on the existing revalidation request
     } CollapsedRevalidation;
 
     CollapsedRevalidation collapsedRevalidation;
+
+    CBDATA_CLASS2(clientReplyContext);
 };
 
 #endif /* SQUID_CLIENTSIDEREPLY_H */

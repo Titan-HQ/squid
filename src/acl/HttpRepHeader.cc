@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -7,14 +7,22 @@
  */
 
 #include "squid.h"
-#include "acl/FilledChecklist.h"
+#include "acl/Checklist.h"
 #include "acl/HttpHeaderData.h"
 #include "acl/HttpRepHeader.h"
 #include "HttpReply.h"
 
 int
-ACLHTTPRepHeaderStrategy::match (ACLData<MatchType> * &data, ACLFilledChecklist *checklist)
+ACLHTTPRepHeaderStrategy::match (ACLData<MatchType> * &data, ACLFilledChecklist *checklist, ACLFlags &)
 {
     return data->match (&checklist->reply->header);
 }
+
+ACLHTTPRepHeaderStrategy *
+ACLHTTPRepHeaderStrategy::Instance()
+{
+    return &Instance_;
+}
+
+ACLHTTPRepHeaderStrategy ACLHTTPRepHeaderStrategy::Instance_;
 

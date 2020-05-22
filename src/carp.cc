@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -13,9 +13,9 @@
 #include "HttpRequest.h"
 #include "mgr/Registration.h"
 #include "neighbors.h"
-#include "PeerSelectState.h"
 #include "SquidConfig.h"
 #include "Store.h"
+#include "URL.h"
 
 #include <cmath>
 
@@ -143,11 +143,8 @@ carpInit(void)
 }
 
 CachePeer *
-carpSelectParent(PeerSelector *ps)
+carpSelectParent(HttpRequest * request)
 {
-    assert(ps);
-    HttpRequest *request = ps->request;
-
     int k;
     CachePeer *p = NULL;
     CachePeer *tp;
@@ -160,43 +157,47 @@ carpSelectParent(PeerSelector *ps)
         return NULL;
 
     /* calculate hash key */
-    debugs(39, 2, "carpSelectParent: Calculating hash for " << request->effectiveRequestUri());
+    debugs(39, 2, "carpSelectParent: Calculating hash for " << urlCanonical(request));
 
     /* select CachePeer */
     for (k = 0; k < n_carp_peers; ++k) {
         SBuf key;
         tp = carp_peers[k];
         if (tp->options.carp_key.set) {
-            // this code follows URI syntax pattern.
-            // corner cases should use the full effective request URI
+            //this code follows urlCanonical's pattern.
+            //   corner cases should use the canonical URL
             if (tp->options.carp_key.scheme) {
-                key.append(request->url.getScheme().image());
+                key.append(request->url.getScheme().c_str());
                 if (key.length()) //if the scheme is not empty
                     key.append("://");
             }
             if (tp->options.carp_key.host) {
-                key.append(request->url.host());
+                key.append(request->GetHost());
             }
             if (tp->options.carp_key.port) {
-                key.appendf(":%u", request->url.port());
+                static char portbuf[7];
+                snprintf(portbuf,7,":%d", request->port);
+                key.append(portbuf);
             }
             if (tp->options.carp_key.path) {
-                // XXX: fix when path and query are separate
-                key.append(request->url.path().substr(0,request->url.path().find('?'))); // 0..N
+                String::size_type pos;
+                if ((pos=request->urlpath.find('?'))!=String::npos)
+                    key.append(SBuf(request->urlpath.substr(0,pos)));
+                else
+                    key.append(SBuf(request->urlpath));
             }
             if (tp->options.carp_key.params) {
-                // XXX: fix when path and query are separate
-                SBuf::size_type pos;
-                if ((pos=request->url.path().find('?')) != SBuf::npos)
-                    key.append(request->url.path().substr(pos)); // N..npos
+                String::size_type pos;
+                if ((pos=request->urlpath.find('?'))!=String::npos)
+                    key.append(SBuf(request->urlpath.substr(pos,request->urlpath.size())));
             }
         }
         // if the url-based key is empty, e.g. because the user is
         // asking to balance on the path but the request doesn't supply any,
-        // then fall back to the effective request URI
+        // then fall back to canonical URL
 
         if (key.isEmpty())
-            key=request->effectiveRequestUri();
+            key=SBuf(urlCanonical(request));
 
         for (const char *c = key.rawContent(), *e=key.rawContent()+key.length(); c < e; ++c)
             user_hash += ROTATE_LEFT(user_hash, 19) + *c;
@@ -207,7 +208,7 @@ carpSelectParent(PeerSelector *ps)
         debugs(39, 3, "carpSelectParent: key=" << key << " name=" << tp->name << " combined_hash=" << combined_hash  <<
                " score=" << std::setprecision(0) << score);
 
-        if ((score > high_score) && peerHTTPOkay(tp, ps)) {
+        if ((score > high_score) && peerHTTPOkay(tp, request)) {
             p = tp;
             high_score = score;
         }

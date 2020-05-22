@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -7,12 +7,11 @@
  */
 
 #include "squid.h"
-#include "auth/CredentialsCache.h"
+#include "auth/Config.h"
 #include "auth/ntlm/User.h"
-#include "auth/SchemeConfig.h"
 #include "Debug.h"
 
-Auth::Ntlm::User::User(Auth::SchemeConfig *aConfig, const char *aRequestRealm) :
+Auth::Ntlm::User::User(Auth::Config *aConfig, const char *aRequestRealm) :
     Auth::User(aConfig, aRequestRealm)
 {
 }
@@ -26,18 +25,5 @@ int32_t
 Auth::Ntlm::User::ttl() const
 {
     return -1; // NTLM credentials cannot be cached.
-}
-
-CbcPointer<Auth::CredentialsCache>
-Auth::Ntlm::User::Cache()
-{
-    static CbcPointer<Auth::CredentialsCache> p(new Auth::CredentialsCache("ntlm", "GC NTLM user credentials"));
-    return p;
-}
-
-void
-Auth::Ntlm::User::addToNameCache()
-{
-    Cache()->insert(userKey(), this);
 }
 

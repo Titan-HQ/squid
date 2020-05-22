@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -17,7 +17,7 @@
 
 /* CommCalls implement AsyncCall interface for comm_* callbacks.
  * The classes cover two call dialer kinds:
- *     - A C-style call using a function pointer (deprecated);
+ *     - A C-style call using a function pointer (depricated);
  *     - A C++-style call to an AsyncJob child.
  * and several comm_* callback kinds:
  *     - accept (IOACB)
@@ -294,12 +294,14 @@ class FdeCbPtrFun: public CallDialer,
 public:
     typedef FdeCbParams Params;
 
-    FdeCbPtrFun(FDECB *aHandler, const Params &aParams);
+    //FdeCbPtrFun(FDECB *aHandler, const Params &aParams);
+    FdeCbPtrFun(FDECB *aHandler, const int fd);
     void dial();
     virtual void print(std::ostream &os) const;
 
 public:
     FDECB *handler;
+    bool _empty;
 };
 
 // AsyncCall to comm handlers implemented as global functions.

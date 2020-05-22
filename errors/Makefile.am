@@ -1,4 +1,4 @@
-## Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+## Copyright (C) 1996-2017 The Squid Software Foundation and contributors
 ##
 ## Squid software is distributed under GPLv2+ license and includes
 ## contributions from numerous individuals and organizations.
@@ -11,6 +11,7 @@ errordir = $(datadir)/errors
 
 DEFAULT_ERROR_DIR	= $(errordir)
 DEFAULT_STYLESHEET	= $(sysconfdir)/errorpage.css
+DEFAULT_WT_STYLESHEET	= $(sysconfdir)/webtitan.css
 
 ## List of automated translations possible:
 include $(srcdir)/template.list
@@ -22,7 +23,7 @@ EXTRA_DIST = \
 	templates/error-details.txt \
 	language.list \
 	template.list \
-	aliases alias-link.sh alias-upgrade errorpage.css TRANSLATORS COPYRIGHT
+	aliases alias-link.sh alias-upgrade errorpage.css webtitan.css TRANSLATORS COPYRIGHT
 
 all: all-am
 
@@ -65,6 +66,12 @@ install-exec-local: translate
 		echo "$(INSTALL_DATA) $(srcdir)/errorpage.css $(DESTDIR)$(DEFAULT_STYLESHEET)"; \
 		$(INSTALL_DATA) $(srcdir)/errorpage.css $(DESTDIR)$(DEFAULT_STYLESHEET); \
 	fi
+	if test -f $(DESTDIR)$(DEFAULT_WT_STYLESHEET) ; then \
+		echo "$@ will not overwrite existing $(DESTDIR)$(DEFAULT_WT_STYLESHEET)" ; \
+	else \
+		echo "$(INSTALL_DATA) $(srcdir)/webtitan.css $(DESTDIR)$(DEFAULT_WT_STYLESHEET)"; \
+		$(INSTALL_DATA) $(srcdir)/webtitan.css $(DESTDIR)$(DEFAULT_WT_STYLESHEET); \
+	fi
 
 install-data-local: translate
 	$(mkinstalldirs) $(DESTDIR)$(DEFAULT_ERROR_DIR) ; \
@@ -88,6 +95,7 @@ install-data-local: translate
 	$(INSTALL_DATA) $(srcdir)/TRANSLATORS $(DESTDIR)$(DEFAULT_ERROR_DIR)/TRANSLATORS; \
 	$(INSTALL_DATA) $(srcdir)/COPYRIGHT $(DESTDIR)$(DEFAULT_ERROR_DIR)/COPYRIGHT; \
 	$(INSTALL_DATA) $(srcdir)/errorpage.css $(DESTDIR)$(DEFAULT_STYLESHEET).default; \
+	$(INSTALL_DATA) $(srcdir)/webtitan.css $(DESTDIR)$(DEFAULT_WT_STYLESHEET).default; \
 	$(SHELL) $(srcdir)/alias-link.sh "$(LN)" "$(RM)" "$(DESTDIR)$(DEFAULT_ERROR_DIR)" "$(srcdir)/aliases" || exit 1 ;
 
 uninstall-local:

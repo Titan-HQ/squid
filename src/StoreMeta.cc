@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -9,7 +9,6 @@
 /* DEBUG: section 20    Storage Manager Swapfile Metadata */
 
 #include "squid.h"
-#include "base/Range.h"
 #include "MemObject.h"
 #include "Store.h"
 #include "StoreMeta.h"
@@ -49,15 +48,38 @@ StoreMeta::validType(char type)
     return true;
 }
 
+class IntRange
+{
+
+public:
+    IntRange (int minimum, int maximum) : _min (minimum), _max (maximum) {
+        if (_min > _max) {
+            int temp = _min;
+            _min = _max;
+            _max = temp;
+        }
+    }
+
+    bool includes (int anInt) const {
+        if (anInt < _min || anInt > _max)
+            return false;
+
+        return true;
+    }
+
+private:
+    int _min;
+    int _max;
+};
+
 const int StoreMeta::MinimumTLVLength = 0;
 const int StoreMeta::MaximumTLVLength = 1 << 16;
 
 bool
 StoreMeta::validLength(int aLength) const
 {
-    static const Range<int> TlvValidLengths = Range<int>(StoreMeta::MinimumTLVLength, StoreMeta::MaximumTLVLength);
-    if (!TlvValidLengths.contains(aLength)) {
-        debugs(20, DBG_CRITICAL, MYNAME << ": insane length (" << aLength << ")!");
+    if (!IntRange (MinimumTLVLength, MaximumTLVLength).includes(aLength)) {
+        debugs(20, DBG_CRITICAL, "storeSwapMetaUnpack: insane length (" << aLength << ")!");
         return false;
     }
 
@@ -135,7 +157,7 @@ StoreMeta::Add(StoreMeta **tail, StoreMeta *aNode)
 }
 
 bool
-StoreMeta::checkConsistency(StoreEntry *) const
+StoreMeta::checkConsistency(StoreEntry *e) const
 {
     switch (getType()) {
 
@@ -162,19 +184,5 @@ StoreMeta::checkConsistency(StoreEntry *) const
     }
 
     return true;
-}
-
-StoreMeta::StoreMeta(const StoreMeta &s) :
-    length(s.length),
-    value(s.value),
-    next(s.next)
-{}
-
-StoreMeta& StoreMeta::operator=(const StoreMeta &s)
-{
-    length=s.length;
-    value=s.value;
-    next=s.next;
-    return *this;
 }
 

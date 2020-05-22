@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -19,18 +19,19 @@ void releaseServerSockets(void) STUB_NOP
 char * dead_msg(void) STUB_RETVAL(NULL)
 void mail_warranty(void) STUB
 void dumpMallocStats(void) STUB
-void squid_getrusage(struct rusage *) STUB
-double rusage_cputime(struct rusage *) STUB_RETVAL(0)
-int rusage_maxrss(struct rusage *) STUB_RETVAL(0)
-int rusage_pagefaults(struct rusage *) STUB_RETVAL(0)
+void squid_getrusage(struct rusage *r) STUB
+double rusage_cputime(struct rusage *r) STUB_RETVAL(0)
+int rusage_maxrss(struct rusage *r) STUB_RETVAL(0)
+int rusage_pagefaults(struct rusage *r) STUB_RETVAL(0)
 void PrintRusage(void) STUB
-void death(int) STUB
-void BroadcastSignalIfAny(int &) STUB
-void sigusr2_handle(int) STUB
-void debug_trap(const char *) STUB
-void sig_child(int) STUB
+void death(int sig) STUB
+void BroadcastSignalIfAny(int& sig) STUB
+void sigusr2_handle(int sig) STUB
+void debug_trap(const char *message) STUB
+void sig_child(int sig) STUB
+void sig_shutdown(int sig) STUB
 const char * getMyHostname(void) STUB_RETVAL(NULL)
-const char * uniqueHostname(void) STUB_RETVAL(NULL)
+const char * const uniqueHostname(void) STUB_RETVAL(NULL)
 void leave_suid(void) STUB_NOP
 void enter_suid(void) STUB
 void no_suid(void) STUB
@@ -59,22 +60,20 @@ bool IamCoordinatorProcess() STUB_RETVAL(false)
 bool IamPrimaryProcess() STUB_RETVAL(false)
 int NumberOfKids() STUB_RETVAL(0)
 
-//not actually needed in the Stub, causes dependency on SBuf
-//SBuf ProcessRoles() STUB_RETVAL(SBuf())
+//not yet needed in the Stub, causes dependency on String
+//String ProcessRoles() STUB_RETVAL(String())
+void writePidFile(void) STUB
+pid_t readPidFile(void) STUB_RETVAL(0)
 void setMaxFD(void) STUB
 void setSystemLimits(void) STUB
-void squid_signal(int, SIGHDLR *, int) STUB
+void squid_signal(int sig, SIGHDLR * func, int flags) STUB
 void logsFlush(void) STUB
-void debugObj(int, int, const char *, void *, ObjPackMethod) STUB
+void kb_incr(kb_t * k, size_t v) STUB
+void debugObj(int section, int level, const char *label, void *obj, ObjPackMethod pm) STUB
 void parseEtcHosts(void) STUB
 int getMyPort(void) STUB_RETVAL(0)
-void setUmask(mode_t) STUB
-void strwordquote(MemBuf *, const char *) STUB
+void setUmask(mode_t mask) STUB
+void strwordquote(MemBuf * mb, const char *str) STUB
 void keepCapabilities(void) STUB
-void restoreCapabilities(bool) STUB
-pid_t WaitForOnePid(pid_t, PidStatus &, int) STUB_RETVAL(0)
-
-#if _SQUID_WINDOWS_
-SBuf WindowsErrorMessage(DWORD) STUB_RETVAL(SBuf())
-#endif // _SQUID_WINDOWS_
+void restoreCapabilities(bool keep) STUB
 

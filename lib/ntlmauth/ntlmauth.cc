@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -12,7 +12,6 @@
 #include "squid.h"
 
 #include <cstring>
-#include <random>
 #if HAVE_STRINGS_H
 #include <strings.h>
 #endif
@@ -179,16 +178,21 @@ ntlm_add_to_payload(const ntlmhdr *packet_hdr,
 /* ************************************************************************* */
 
 /*
- * Generates a challenge request nonce.
+ * Generates a challenge request nonce. The randomness of the 8 byte
+ * challenge strings can be guarenteed to be poor at best.
  */
 void
 ntlm_make_nonce(char *nonce)
 {
-    static std::mt19937 mt(time(0));
-    static xuniform_int_distribution<uint8_t> dist;
+    static unsigned hash;
+    uint32_t r = static_cast<uint32_t>(rand());
+    r = (hash ^ r) + r;
 
-    for (int i = 0; i < NTLM_NONCE_LEN; ++i)
-        nonce[i] = static_cast<char>(dist(mt) & 0xFF);
+    for (int i = 0; i < NTLM_NONCE_LEN; ++i) {
+        nonce[i] = static_cast<char>(r & 0xFF);
+        r = (r >> 2) ^ r;
+    }
+    hash = r;
 }
 
 /**
@@ -197,7 +201,7 @@ ntlm_make_nonce(char *nonce)
  */
 void
 ntlm_make_challenge(ntlm_challenge *ch,
-                    const char *domain, const char *,
+                    const char *domain, const char *domain_controller_UNUSED,
                     const char *challenge_nonce, const int challenge_nonce_len,
                     const uint32_t flags)
 {
@@ -257,7 +261,7 @@ ntlm_unpack_auth(const ntlm_authenticate *auth, char *user, char *domain, const 
         debug("ntlm_unpack_auth: Domain '%s' (len=%d).\n", domain, rv.l);
     }
     if (rv.l >= size) {
-        debug("ntlm_unpack_auth: Domain length %d too big for %d byte packet.\n", rv.l, size);
+        debug("ntlm_unpack_auth: Domain length %d too big for %d byte packet.\n", rv.l , size);
         return NTLM_ERR_BLOB;
     }
 

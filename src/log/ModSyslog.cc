@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -98,34 +98,34 @@ typedef struct {
 #define PRIORITY_MASK (LOG_ERR | LOG_WARNING | LOG_NOTICE | LOG_INFO | LOG_DEBUG)
 
 static void
-logfile_mod_syslog_writeline(Logfile * lf, const char *buf, size_t)
+logfile_mod_syslog_writeline(Logfile * lf, const char *buf, size_t len)
 {
     l_syslog_t *ll = (l_syslog_t *) lf->data;
     syslog(ll->syslog_priority, "%s", (char *) buf);
 }
 
 static void
-logfile_mod_syslog_linestart(Logfile *)
+logfile_mod_syslog_linestart(Logfile * lf)
 {
 }
 
 static void
-logfile_mod_syslog_lineend(Logfile *)
+logfile_mod_syslog_lineend(Logfile * lf)
 {
 }
 
 static void
-logfile_mod_syslog_flush(Logfile *)
+logfile_mod_syslog_flush(Logfile * lf)
 {
 }
 
 static void
-logfile_mod_syslog_rotate(Logfile *, const int16_t)
+logfile_mod_syslog_rotate(Logfile * lf)
 {
 }
 
 static void
-logfile_mod_syslog_close(Logfile *lf)
+logfile_mod_syslog_close(Logfile * lf)
 {
     xfree(lf->data);
     lf->data = NULL;
@@ -135,7 +135,7 @@ logfile_mod_syslog_close(Logfile *lf)
  * This code expects the path to be syslog:<priority>
  */
 int
-logfile_mod_syslog_open(Logfile * lf, const char *path, size_t, int)
+logfile_mod_syslog_open(Logfile * lf, const char *path, size_t bufsz, int fatal_flag)
 {
     lf->f_close = logfile_mod_syslog_close;
     lf->f_linewrite = logfile_mod_syslog_writeline;

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -9,23 +9,46 @@
 #ifndef SQUID_HTTPHEADER_H
 #define SQUID_HTTPHEADER_H
 
-#include "anyp/ProtocolVersion.h"
-#include "base/LookupTable.h"
-#include "http/RegisteredHeaders.h"
 /* because we pass a spec by value */
 #include "HttpHeaderMask.h"
-#include "mem/PoolingAllocator.h"
-#include "sbuf/forward.h"
+#include "MemPool.h"
 #include "SquidString.h"
 
 #include <vector>
+
+#include "TAPE.h"
 
 /* class forward declarations */
 class HttpHdrCc;
 class HttpHdrContRange;
 class HttpHdrRange;
 class HttpHdrSc;
-class Packable;
+class Packer;
+class StoreEntry;
+class SBuf;
+
+/* constant attributes of http header fields */
+
+/// recognized or "known" header fields; and the RFC which defines them (or not)
+/// http://www.iana.org/assignments/message-headers/message-headers.xhtml
+
+typedef t_http_hdr_types http_hdr_type;
+
+
+/** possible types for http header fields */
+typedef enum {
+    ftInvalid = HDR_ENUM_END,   /**< to catch nasty errors with hdr_id<->fld_type clashes */
+    ftInt,
+    ftInt64,
+    ftStr,
+    ftDate_1123,
+    ftETag,
+    ftPCc,
+    ftPContRange,
+    ftPRange,
+    ftPSc,
+    ftDate_1123_or_ETag
+} field_type;
 
 /** Possible owners of http header */
 typedef enum {
@@ -41,6 +64,15 @@ typedef enum {
     hoEnd
 } http_hdr_owner_type;
 
+// currently a POD
+class HttpHeaderFieldAttrs
+{
+public:
+    const char *name;
+    http_hdr_type id;
+    field_type type;
+};
+
 /** Iteration for headers; use HttpHeaderPos as opaque type, do not interpret */
 typedef ssize_t HttpHeaderPos;
 
@@ -49,21 +81,22 @@ typedef ssize_t HttpHeaderPos;
 
 class HttpHeaderEntry
 {
-    MEMPROXY_CLASS(HttpHeaderEntry);
 
 public:
-    HttpHeaderEntry(Http::HdrType id, const SBuf &name, const char *value);
+    HttpHeaderEntry(http_hdr_type id, const char *name, const char *value);
     ~HttpHeaderEntry();
     static HttpHeaderEntry *parse(const char *field_start, const char *field_end);
     HttpHeaderEntry *clone() const;
-    void packInto(Packable *p) const;
+    void packInto(Packer *p) const;
     int getInt() const;
     int64_t getInt64() const;
-
-    Http::HdrType id;
-    SBuf name;
+    MEMPROXY_CLASS(HttpHeaderEntry);
+    http_hdr_type id;
+    String name;
     String value;
 };
+
+MEMPROXY_CLASS_INLINE(HttpHeaderEntry);
 
 class ETag;
 class TimeOrTag;
@@ -82,52 +115,34 @@ public:
     /* Interface functions */
     void clean();
     void append(const HttpHeader * src);
-    bool update(HttpHeader const *fresh);
+    bool update (HttpHeader const *fresh);
     void compact();
-    int parse(const char *header_start, size_t len, Http::ContentLengthInterpreter &interpreter);
-    /// Parses headers stored in a buffer.
-    /// \returns 1 and sets hdr_sz on success
-    /// \returns 0 when needs more data
-    /// \returns -1 on error
-    int parse(const char *buf, size_t buf_len, bool atEnd, size_t &hdr_sz, Http::ContentLengthInterpreter &interpreter);
-    void packInto(Packable * p, bool mask_sensitive_info=false) const;
+    int reset();
+    int parse(const char *header_start, const char *header_end);
+    void packInto(Packer * p, bool mask_sensitive_info=false) const;
     HttpHeaderEntry *getEntry(HttpHeaderPos * pos) const;
-    HttpHeaderEntry *findEntry(Http::HdrType id) const;
-    /// deletes all fields with a given name, if any.
-    /// \return #fields deleted
-    int delByName(const SBuf &name);
-    /// \deprecated use SBuf method instead. performance regression: reallocates
-    int delByName(const char *name) { return delByName(SBuf(name)); }
-    int delById(Http::HdrType id);
+    HttpHeaderEntry *findEntry(http_hdr_type id) const;
+    int delByName(const char *name);
+    int delById(http_hdr_type id);
     void delAt(HttpHeaderPos pos, int &headers_deleted);
     void refreshMask();
     void addEntry(HttpHeaderEntry * e);
     void insertEntry(HttpHeaderEntry * e);
-    String getList(Http::HdrType id) const;
-    bool getList(Http::HdrType id, String *s) const;
+    String getList(http_hdr_type id) const;
+    bool getList(http_hdr_type id, String *s) const;
+    String getStrOrList(http_hdr_type id) const;
     bool conflictingContentLength() const { return conflictingContentLength_; }
-    String getStrOrList(Http::HdrType id) const;
-    String getByName(const SBuf &name) const;
     String getByName(const char *name) const;
-    String getById(Http::HdrType id) const;
-    /// returns true iff a [possibly empty] field identified by id is there
-    /// when returning true, also sets the `result` parameter (if it is not nil)
-    bool getByIdIfPresent(Http::HdrType id, String *result) const;
-    /// returns true iff a [possibly empty] named field is there
-    /// when returning true, also sets the `value` parameter (if it is not nil)
-    bool hasNamed(const SBuf &s, String *value = 0) const;
-    /// \deprecated use SBuf method instead.
-    bool hasNamed(const char *name, unsigned int namelen, String *value = 0) const;
+    /// sets value and returns true iff a [possibly empty] named field is there
+    bool getByNameIfPresent(const char *name, String &value) const;
     String getByNameListMember(const char *name, const char *member, const char separator) const;
-    String getListMember(Http::HdrType id, const char *member, const char separator) const;
-    int has(Http::HdrType id) const;
-    /// Appends "this cache" information to VIA header field.
-    /// Takes the initial VIA value from "from" parameter, if provided.
-    void addVia(const AnyP::ProtocolVersion &ver, const HttpHeader *from = 0);
-    void putInt(Http::HdrType id, int number);
-    void putInt64(Http::HdrType id, int64_t number);
-    void putTime(Http::HdrType id, time_t htime);
-    void putStr(Http::HdrType id, const char *str);
+    String getListMember(http_hdr_type id, const char *member, const char separator) const;
+    int has(http_hdr_type id) const;
+    void putInt(http_hdr_type id, int number);
+    void putInt64(http_hdr_type id, int64_t number);
+    void putTime(http_hdr_type id, time_t htime);
+    void insertTime(http_hdr_type id, time_t htime);
+    void putStr(http_hdr_type id, const char *str);
     void putAuth(const char *auth_scheme, const char *realm);
     void putCc(const HttpHdrCc * cc);
     void putContRange(const HttpHdrContRange * cr);
@@ -135,45 +150,42 @@ public:
     void putSc(HttpHdrSc *sc);
     void putWarning(const int code, const char *const text); ///< add a Warning header
     void putExt(const char *name, const char *value);
-    int getInt(Http::HdrType id) const;
-    int64_t getInt64(Http::HdrType id) const;
-    time_t getTime(Http::HdrType id) const;
-    const char *getStr(Http::HdrType id) const;
-    const char *getLastStr(Http::HdrType id) const;
+    int getInt(http_hdr_type id) const;
+    int64_t getInt64(http_hdr_type id) const;
+    time_t getTime(http_hdr_type id) const;
+    const String *getStrEx(http_hdr_type id) const;
+    const char *getStr(http_hdr_type id) const;
+    const char *getLastStr(http_hdr_type id) const;
     HttpHdrCc *getCc() const;
     HttpHdrRange *getRange() const;
     HttpHdrSc *getSc() const;
     HttpHdrContRange *getContRange() const;
-    const char *getAuth(Http::HdrType id, const char *auth_scheme) const;
-    ETag getETag(Http::HdrType id) const;
-    TimeOrTag getTimeOrTag(Http::HdrType id) const;
-    int hasListMember(Http::HdrType id, const char *member, const char separator) const;
+    const char *getAuth(http_hdr_type id, const char *auth_scheme) const;
+    ETag getETag(http_hdr_type id) const;
+    TimeOrTag getTimeOrTag(http_hdr_type id) const;
+    int hasListMember(http_hdr_type id, const char *member, const char separator) const;
     int hasByNameListMember(const char *name, const char *member, const char separator) const;
     void removeHopByHopEntries();
     inline bool chunked() const; ///< whether message uses chunked Transfer-Encoding
 
     /* protected, do not use these, use interface functions instead */
-    std::vector<HttpHeaderEntry*, PoolingAllocator<HttpHeaderEntry*> > entries; /**< parsed fields in raw format */
+    std::vector<HttpHeaderEntry *> entries;     /**< parsed fields in raw format */
     HttpHeaderMask mask;    /**< bit set <=> entry present */
     http_hdr_owner_type owner;  /**< request or reply */
     int len;            /**< length when packed, not counting terminating null-byte */
 
+///Titax
+    field_type getType(http_hdr_type id) const; 
+
 protected:
     /** \deprecated Public access replaced by removeHopByHopEntries() */
     void removeConnectionHeaderEntries();
-    /// either finds the end of headers or returns false
-    /// If the end was found:
-    /// *parse_start points to the first character after the header delimiter
-    /// *blk_start points to the first header character (i.e. old parse_start value)
-    /// *blk_end points to the first header delimiter character (CR or LF in CR?LF).
-    /// If block starts where it ends, then there are no fields in the header.
-    static bool Isolate(const char **parse_start, size_t l, const char **blk_start, const char **blk_end);
     bool needUpdate(const HttpHeader *fresh) const;
-    bool skipUpdateHeader(const Http::HdrType id) const;
+    bool skipUpdateHeader(const http_hdr_type id) const;
     void updateWarnings();
 
 private:
-    HttpHeaderEntry *findLastEntry(Http::HdrType id) const;
+    HttpHeaderEntry *findLastEntry(http_hdr_type id) const;
     bool conflictingContentLength_; ///< found different Content-Length fields
 };
 
@@ -182,16 +194,19 @@ int httpHeaderParseQuotedString(const char *start, const int len, String *val);
 /// quotes string using RFC 7230 quoted-string rules
 SBuf httpHeaderQuoteString(const char *raw);
 
-void httpHeaderCalcMask(HttpHeaderMask * mask, Http::HdrType http_hdr_type_enums[], size_t count);
+int httpHeaderHasByNameListMember(const HttpHeader * hdr, const char *name, const char *member, const char separator);
+void httpHeaderUpdate(HttpHeader * old, const HttpHeader * fresh, const HttpHeaderMask * denied_mask);
+void httpHeaderCalcMask(HttpHeaderMask * mask, http_hdr_type http_hdr_type_enums[], size_t count);
 
 inline bool
 HttpHeader::chunked() const
 {
-    return has(Http::HdrType::TRANSFER_ENCODING) &&
-           hasListMember(Http::HdrType::TRANSFER_ENCODING, "chunked", ',');
+    return has(HDR_TRANSFER_ENCODING) &&
+           hasListMember(HDR_TRANSFER_ENCODING, "chunked", ',');
 }
 
 void httpHeaderInitModule(void);
+void httpHeaderCleanModule(void);
 
 #endif /* SQUID_HTTPHEADER_H */
 

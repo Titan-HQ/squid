@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -8,8 +8,6 @@
 
 #ifndef SQUID_FS_ROCK_FORWARD_H
 #define SQUID_FS_ROCK_FORWARD_H
-
-#include "store/forward.h"
 
 namespace Ipc
 {
@@ -35,8 +33,6 @@ typedef sfileno SlotId;
 class Rebuild;
 
 class IoState;
-
-class HeaderUpdater;
 
 class DbCellHeader;
 

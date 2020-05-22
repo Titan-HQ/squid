@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -54,14 +54,11 @@ public:
 /// Manages a control connection from an FTP client.
 class Server: public ConnStateData
 {
-    CBDATA_CHILD(Server);
-
 public:
     explicit Server(const MasterXaction::Pointer &xact);
-    virtual ~Server() override;
-
+    virtual ~Server();
     /* AsyncJob API */
-    virtual void callException(const std::exception &e) override;
+    virtual void callException(const std::exception &e);
 
     /// Called by Ftp::Client class when it is start receiving or
     /// sending data.
@@ -80,32 +77,32 @@ protected:
     friend void StartListening();
 
     // errors detected before it is possible to create an HTTP request wrapper
-    enum class EarlyErrorKind {
-        HugeRequest,
-        MissingLogin,
-        MissingUsername,
-        MissingHost,
-        UnsupportedCommand,
-        InvalidUri,
-        MalformedCommand
-    };
+    typedef enum {
+        eekHugeRequest,
+        eekMissingLogin,
+        eekMissingUsername,
+        eekMissingHost,
+        eekUnsupportedCommand,
+        eekInvalidUri,
+        eekMalformedCommand
+    } EarlyErrorKind;
 
     /* ConnStateData API */
-    virtual Http::Stream *parseOneRequest() override;
-    virtual void processParsedRequest(Http::StreamPointer &context) override;
-    virtual void notePeerConnection(Comm::ConnectionPointer conn) override;
-    virtual void clientPinnedConnectionClosed(const CommCloseCbParams &io) override;
-    virtual void handleReply(HttpReply *header, StoreIOBuffer receivedData) override;
-    virtual int pipelinePrefetchMax() const override;
-    virtual bool writeControlMsgAndCall(HttpReply *rep, AsyncCall::Pointer &call) override;
-    virtual time_t idleTimeout() const override;
+    virtual ClientSocketContext *parseOneRequest(Http::ProtocolVersion &ver);
+    virtual void processParsedRequest(ClientSocketContext *context, const Http::ProtocolVersion &ver);
+    virtual void notePeerConnection(Comm::ConnectionPointer conn);
+    virtual void clientPinnedConnectionClosed(const CommCloseCbParams &io);
+    virtual void handleReply(HttpReply *header, StoreIOBuffer receivedData);
+    virtual int pipelinePrefetchMax() const;
+    virtual bool writeControlMsgAndCall(ClientSocketContext *context, HttpReply *rep, AsyncCall::Pointer &call);
+    virtual time_t idleTimeout() const;
 
     /* BodyPipe API */
-    virtual void noteMoreBodySpaceAvailable(BodyPipe::Pointer) override;
-    virtual void noteBodyConsumerAborted(BodyPipe::Pointer ptr) override;
+    virtual void noteMoreBodySpaceAvailable(BodyPipe::Pointer);
+    virtual void noteBodyConsumerAborted(BodyPipe::Pointer ptr);
 
     /* AsyncJob API */
-    virtual void start() override;
+    virtual void start();
 
     /* Comm callbacks */
     static void AcceptCtrlConnection(const CommAcceptCbParams &params);
@@ -120,8 +117,8 @@ protected:
     bool createDataConnection(Ip::Address cltAddr);
     void closeDataConnection();
 
-    /// Called after data trasfer on client-to-squid data connection is
-    /// finished.
+    /// Writes the data-transfer status reply to the FTP client and
+    /// closes the data connection.
     void userDataCompletionCheckpoint(int finalStatusCode);
 
     /// Writes the data-transfer status reply to the FTP client and
@@ -130,12 +127,12 @@ protected:
 
     void calcUri(const SBuf *file);
     void changeState(const Ftp::ServerState newState, const char *reason);
-    Http::Stream *handleUserRequest(const SBuf &cmd, SBuf &params);
+    ClientSocketContext *handleUserRequest(const SBuf &cmd, SBuf &params);
     bool checkDataConnPost() const;
     void replyDataWritingCheckpoint();
     void maybeReadUploadData();
 
-    void setReply(const int code, const char *msg);
+    bool setReply(const int code, const char *const msg);
     void writeCustomReply(const int code, const char *msg, const HttpReply *reply = NULL);
     void writeEarlyReply(const int code, const char *msg);
     void writeErrorReply(const HttpReply *reply, const int status);
@@ -144,7 +141,7 @@ protected:
     void writeForwardedReplyAndCall(const HttpReply *reply, AsyncCall::Pointer &call);
     void writeReply(MemBuf &mb);
 
-    Http::Stream *earlyError(const EarlyErrorKind eek);
+    ClientSocketContext *earlyError(const EarlyErrorKind eek);
     bool handleRequest(HttpRequest *);
     void setDataCommand();
     bool checkDataConnPre();
@@ -198,6 +195,8 @@ private:
 
     /// a response which writing was postponed until stopWaitingForOrigin()
     HttpReply::Pointer delayedReply;
+
+    CBDATA_CLASS2(Server);
 };
 
 } // namespace Ftp

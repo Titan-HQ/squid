@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -12,7 +12,6 @@
 #include "acl/CertificateData.h"
 #include "acl/Checklist.h"
 #include "cache_cf.h"
-#include "ConfigParser.h"
 #include "Debug.h"
 #include "wordlist.h"
 
@@ -59,17 +58,14 @@ splaystrcmp (T&l, T&r)
 }
 
 bool
-ACLCertificateData::match(X509 *cert)
+ACLCertificateData::match(X509 *const cert)
 {
-    if (!cert)
-        return 0;
-
-    char const *value = sslAttributeCall(cert, attribute);
-    debugs(28, 6, (attribute ? attribute : "value") << "=" << value);
-    if (value == NULL)
-        return 0;
-
-    return values.match(value);
+    static char _buff[1024]={};
+    if (cert && sslAttributeCall(cert, attribute,_buff,sizeof(_buff))){
+       debugs(28, 6, (attribute ? attribute : "value") << "=" << _buff);
+       return values.match(_buff);
+    }
+    return 0;
 }
 
 SBufList
@@ -79,7 +75,13 @@ ACLCertificateData::dump() const
     if (validAttributesStr)
         sl.push_back(SBuf(attribute));
 
+#if __cplusplus >= 201103L
     sl.splice(sl.end(),values.dump());
+#else
+    // temp is needed until c++11 move constructor
+    SBufList tmp = values.dump();
+    sl.splice(sl.end(),tmp);
+#endif
     return sl;
 }
 
@@ -87,14 +89,14 @@ void
 ACLCertificateData::parse()
 {
     if (validAttributesStr) {
-        char *newAttribute = ConfigParser::strtokFile();
+        char *newAttribute = strtokFile();
 
         if (!newAttribute) {
-            if (!attributeIsOptional) {
-                debugs(28, DBG_CRITICAL, "FATAL: required attribute argument missing");
-                self_destruct();
-            }
-            return;
+            if (attributeIsOptional)
+                return;
+
+            debugs(28, DBG_CRITICAL, "FATAL: required attribute argument missing");
+            self_destruct();
         }
 
         // Handle the cases where we have optional -x type attributes
@@ -113,7 +115,6 @@ ACLCertificateData::parse()
             if (!valid) {
                 debugs(28, DBG_CRITICAL, "FATAL: Unknown option. Supported option(s) are: " << validAttributesStr);
                 self_destruct();
-                return;
             }
 
             /* an acl must use consistent attributes in all config lines */
@@ -121,7 +122,6 @@ ACLCertificateData::parse()
                 if (strcasecmp(newAttribute, attribute) != 0) {
                     debugs(28, DBG_CRITICAL, "FATAL: An acl must use consistent attributes in all config lines (" << newAttribute << "!=" << attribute << ").");
                     self_destruct();
-                    return;
                 }
             } else {
                 if (strcasecmp(newAttribute, "DN") != 0) {
@@ -142,7 +142,6 @@ ACLCertificateData::parse()
                     if (nid == 0) {
                         debugs(28, DBG_CRITICAL, "FATAL: Not valid SSL certificate attribute name or numerical OID: " << newAttribute);
                         self_destruct();
-                        return;
                     }
                 }
                 attribute = xstrdup(newAttribute);

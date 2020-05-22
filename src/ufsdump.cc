@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -10,7 +10,6 @@
 
 #include "squid.h"
 #include "Generic.h"
-#include "md5.h"
 #include "mgr/Registration.h"
 #include "Store.h"
 #include "store_key_md5.h"
@@ -31,7 +30,7 @@ eventAdd(const char *name, EVH * func, void *arg, double when, int, bool cbdata)
 
 // required by storeKeyPublicByRequest*
 // XXX: what pulls in storeKeyPublicByRequest?
-const char *urlCanonical(HttpRequest *) { assert(false); return NULL; }
+const char *urlCanonical(HttpRequest *const) { assert(false); return NULL; }
 
 void
 storeAppendPrintf(StoreEntry * e, const char *fmt,...)
@@ -52,14 +51,14 @@ void
 death(int sig)
 {
     std::cout << "Fatal: Signal " <<  sig;
-    exit(EXIT_FAILURE);
+    exit(1);
 }
 
 void
 fatal(const char *message)
 {
     fprintf(stderr, "FATAL: %s\n", message);
-    exit(EXIT_FAILURE);
+    exit(1);
 }
 
 /* end stub functions */
@@ -161,8 +160,9 @@ main(int argc, char *argv[])
 
         for_each(*metadata, dumper);
 
-    } catch (const std::exception &e) {
-        std::cout << "Failed : " << e.what() << std::endl;
+        return 0;
+    } catch (std::runtime_error error) {
+        std::cout << "Failed : " << error.what() << std::endl;
 
         if (fd >= 0)
             close(fd);
@@ -170,9 +170,7 @@ main(int argc, char *argv[])
         if (metadata)
             StoreMeta::FreeList(&metadata);
 
-        return EXIT_FAILURE;
+        return 1;
     }
-
-    return EXIT_SUCCESS;
 }
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -183,8 +183,7 @@ ipcCreate(int type, const char *prog, const char *const args[], const char *name
         Ip::Address::InitAddr(aiPS);
 
         if (getsockname(pwfd, aiPS->ai_addr, &(aiPS->ai_addrlen) ) < 0) {
-            int xerrno = errno;
-            debugs(54, DBG_CRITICAL, "ipcCreate: getsockname: " << xstrerr(xerrno));
+            debugs(54, DBG_CRITICAL, "ipcCreate: getsockname: " << xstrerror());
             Ip::Address::FreeAddr(aiPS);
             return ipcCloseAllFD(prfd, pwfd, crfd, cwfd);
         }
@@ -197,8 +196,7 @@ ipcCreate(int type, const char *prog, const char *const args[], const char *name
         Ip::Address::InitAddr(aiCS);
 
         if (getsockname(crfd, aiCS->ai_addr, &(aiCS->ai_addrlen) ) < 0) {
-            int xerrno = errno;
-            debugs(54, DBG_CRITICAL, "ipcCreate: getsockname: " << xstrerr(xerrno));
+            debugs(54, DBG_CRITICAL, "ipcCreate: getsockname: " << xstrerror());
             Ip::Address::FreeAddr(aiCS);
             return ipcCloseAllFD(prfd, pwfd, crfd, cwfd);
         }
@@ -212,8 +210,7 @@ ipcCreate(int type, const char *prog, const char *const args[], const char *name
 
     if (type == IPC_TCP_SOCKET) {
         if (listen(crfd, 1) < 0) {
-            int xerrno = errno;
-            debugs(54, DBG_IMPORTANT, "ipcCreate: listen FD " << crfd << ": " << xstrerr(xerrno));
+            debugs(54, DBG_IMPORTANT, "ipcCreate: listen FD " << crfd << ": " << xstrerror());
             return ipcCloseAllFD(prfd, pwfd, crfd, cwfd);
         }
 
@@ -240,8 +237,7 @@ ipcCreate(int type, const char *prog, const char *const args[], const char *name
     thread = _beginthreadex(NULL, 0, ipc_thread_1, &params, 0, NULL);
 
     if (thread == 0) {
-        int xerrno = errno;
-        debugs(54, DBG_IMPORTANT, "ipcCreate: _beginthread: " << xstrerr(xerrno));
+        debugs(54, DBG_IMPORTANT, "ipcCreate: _beginthread: " << xstrerror());
         return ipcCloseAllFD(prfd, pwfd, crfd, cwfd);
     }
 
@@ -255,9 +251,8 @@ ipcCreate(int type, const char *prog, const char *const args[], const char *name
     x = recv(prfd, (void *)hello_buf, HELLO_BUF_SZ - 1, 0);
 
     if (x < 0) {
-        int xerrno = errno;
         debugs(54, DBG_CRITICAL, "ipcCreate: PARENT: hello read test failed");
-        debugs(54, DBG_CRITICAL, "--> read: " << xstrerr(xerrno));
+        debugs(54, DBG_CRITICAL, "--> read: " << xstrerror());
         CloseHandle((HANDLE) thread);
         return ipcCloseAllFD(prfd, pwfd, -1, -1);
     } else if (strcmp(hello_buf, hello_string)) {
@@ -271,9 +266,8 @@ ipcCreate(int type, const char *prog, const char *const args[], const char *name
     x = send(pwfd, (const void *)ok_string, strlen(ok_string), 0);
 
     if (x < 0) {
-        int xerrno = errno;
         debugs(54, DBG_CRITICAL, "ipcCreate: PARENT: OK write test failed");
-        debugs(54, DBG_CRITICAL, "--> read: " << xstrerr(xerrno));
+        debugs(54, DBG_CRITICAL, "--> read: " << xstrerror());
         CloseHandle((HANDLE) thread);
         return ipcCloseAllFD(prfd, pwfd, -1, -1);
     }
@@ -282,9 +276,8 @@ ipcCreate(int type, const char *prog, const char *const args[], const char *name
     x = recv(prfd, (void *)hello_buf, HELLO_BUF_SZ - 1, 0);
 
     if (x < 0) {
-        int xerrno = errno;
         debugs(54, DBG_CRITICAL, "ipcCreate: PARENT: OK read test failed");
-        debugs(54, DBG_CRITICAL, "--> read: " << xstrerr(xerrno));
+        debugs(54, DBG_CRITICAL, "--> read: " << xstrerror());
         CloseHandle((HANDLE) thread);
         return ipcCloseAllFD(prfd, pwfd, -1, -1);
     } else if (!strcmp(hello_buf, err_string)) {
@@ -339,11 +332,12 @@ ipcCreate(int type, const char *prog, const char *const args[], const char *name
 static int
 ipcSend(int cwfd, const char *buf, int len)
 {
-    int x = send(cwfd, (const void *)buf, len, 0);
+    int x;
+
+    x = send(cwfd, (const void *)buf, len, 0);
 
     if (x < 0) {
-        int xerrno = errno;
-        debugs(54, DBG_CRITICAL, "sendto FD " << cwfd << ": " << xstrerr(xerrno));
+        debugs(54, DBG_CRITICAL, "sendto FD " << cwfd << ": " << xstrerror());
         debugs(54, DBG_CRITICAL, "ipcCreate: CHILD: hello write test failed");
     }
 
@@ -400,8 +394,7 @@ ipc_thread_1(void *in_params)
         debugs(54, 3, "ipcCreate: calling accept on FD " << crfd);
 
         if ((fd = accept(crfd, NULL, NULL)) < 0) {
-            int xerrno = errno;
-            debugs(54, DBG_CRITICAL, "ipcCreate: FD " << crfd << " accept: " << xstrerr(xerrno));
+            debugs(54, DBG_CRITICAL, "ipcCreate: FD " << crfd << " accept: " << xstrerror());
             goto cleanup;
         }
 
@@ -419,8 +412,7 @@ ipc_thread_1(void *in_params)
     x = send(cwfd, (const void *)hello_string, strlen(hello_string) + 1, 0);
 
     if (x < 0) {
-        int xerrno = errno;
-        debugs(54, DBG_CRITICAL, "sendto FD " << cwfd << ": " << xstrerr(xerrno));
+        debugs(54, DBG_CRITICAL, "sendto FD " << cwfd << ": " << xstrerror());
         debugs(54, DBG_CRITICAL, "ipcCreate: CHILD: hello write test failed");
         goto cleanup;
     }
@@ -430,9 +422,8 @@ ipc_thread_1(void *in_params)
     x = recv(crfd, (void *)buf1, bufSz-1, 0);
 
     if (x < 0) {
-        int xerrno = errno;
         debugs(54, DBG_CRITICAL, "ipcCreate: CHILD: OK read test failed");
-        debugs(54, DBG_CRITICAL, "--> read: " << xstrerr(xerrno));
+        debugs(54, DBG_CRITICAL, "--> read: " << xstrerror());
         goto cleanup;
     } else if (strcmp(buf1, ok_string)) {
         debugs(54, DBG_CRITICAL, "ipcCreate: CHILD: OK read test failed");
@@ -443,15 +434,13 @@ ipc_thread_1(void *in_params)
 
     /* assign file descriptors to child process */
     if (_pipe(p2c, 1024, _O_BINARY | _O_NOINHERIT) < 0) {
-        int xerrno = errno;
-        debugs(54, DBG_CRITICAL, "ipcCreate: CHILD: pipe: " << xstrerr(xerrno));
+        debugs(54, DBG_CRITICAL, "ipcCreate: CHILD: pipe: " << xstrerror());
         ipcSend(cwfd, err_string, strlen(err_string));
         goto cleanup;
     }
 
     if (_pipe(c2p, 1024, _O_BINARY | _O_NOINHERIT) < 0) {
-        int xerrno = errno;
-        debugs(54, DBG_CRITICAL, "ipcCreate: CHILD: pipe: " << xstrerr(xerrno));
+        debugs(54, DBG_CRITICAL, "ipcCreate: CHILD: pipe: " << xstrerror());
         ipcSend(cwfd, err_string, strlen(err_string));
         goto cleanup;
     }
@@ -478,8 +467,7 @@ ipc_thread_1(void *in_params)
         Ip::Address::InitAddr(aiPS_ipc);
 
         if (getsockname(pwfd_ipc, aiPS_ipc->ai_addr, &(aiPS_ipc->ai_addrlen)) < 0) {
-            int xerrno = errno;
-            debugs(54, DBG_CRITICAL, "ipcCreate: getsockname: " << xstrerr(xerrno));
+            debugs(54, DBG_CRITICAL, "ipcCreate: getsockname: " << xstrerror());
             ipcSend(cwfd, err_string, strlen(err_string));
             Ip::Address::FreeAddr(aiPS_ipc);
             goto cleanup;
@@ -493,8 +481,7 @@ ipc_thread_1(void *in_params)
         Ip::Address::InitAddr(aiCS_ipc);
 
         if (getsockname(crfd_ipc, aiCS_ipc->ai_addr, &(aiCS_ipc->ai_addrlen)) < 0) {
-            int xerrno = errno;
-            debugs(54, DBG_CRITICAL, "ipcCreate: getsockname: " << xstrerr(xerrno));
+            debugs(54, DBG_CRITICAL, "ipcCreate: getsockname: " << xstrerror());
             ipcSend(cwfd, err_string, strlen(err_string));
             Ip::Address::FreeAddr(aiCS_ipc);
             goto cleanup;
@@ -590,7 +577,8 @@ ipc_thread_1(void *in_params)
     close(t3);
 
     if (pid == -1) {
-        debugs(54, DBG_CRITICAL, "ipcCreate: CHILD: " << params->prog << ": " << xstrerr(x));
+        errno = x;
+        debugs(54, DBG_CRITICAL, "ipcCreate: CHILD: " << params->prog << ": " << xstrerror());
 
         ipcSend(cwfd, err_string, strlen(err_string));
         goto cleanup;
@@ -602,8 +590,8 @@ ipc_thread_1(void *in_params)
         memset(&wpi, 0, sizeof(wpi));
 
         if (SOCKET_ERROR == WSADuplicateSocket(crfd_ipc, pid, &wpi)) {
-            int xerrno = errno;
-            debugs(54, DBG_CRITICAL, "ipcCreate: CHILD: WSADuplicateSocket: " << xstrerr(xerrno));
+            debugs(54, DBG_CRITICAL, "ipcCreate: CHILD: WSADuplicateSocket: " << xstrerror());
+
             ipcSend(cwfd, err_string, strlen(err_string));
             goto cleanup;
         }
@@ -611,9 +599,9 @@ ipc_thread_1(void *in_params)
         x = write(c2p[1], (const char *) &wpi, sizeof(wpi));
 
         if (x < (ssize_t)sizeof(wpi)) {
-            int xerrno = errno;
-            debugs(54, DBG_CRITICAL, "ipcCreate: CHILD: write FD " << c2p[1] << ": " << xstrerr(xerrno));
+            debugs(54, DBG_CRITICAL, "ipcCreate: CHILD: write FD " << c2p[1] << ": " << xstrerror());
             debugs(54, DBG_CRITICAL, "ipcCreate: CHILD: " << prog << ": socket exchange failed");
+
             ipcSend(cwfd, err_string, strlen(err_string));
             goto cleanup;
         }
@@ -621,9 +609,9 @@ ipc_thread_1(void *in_params)
         x = read(p2c[0], buf1, bufSz-1);
 
         if (x < 0) {
-            int xerrno = errno;
-            debugs(54, DBG_CRITICAL, "ipcCreate: CHILD: read FD " << p2c[0] << ": " << xstrerr(xerrno));
+            debugs(54, DBG_CRITICAL, "ipcCreate: CHILD: read FD " << p2c[0] << ": " << xstrerror());
             debugs(54, DBG_CRITICAL, "ipcCreate: CHILD: " << prog << ": socket exchange failed");
+
             ipcSend(cwfd, err_string, strlen(err_string));
             goto cleanup;
         } else if (strncmp(buf1, ok_string, strlen(ok_string))) {
@@ -638,9 +626,9 @@ ipc_thread_1(void *in_params)
         x = write(c2p[1], (const char *) &PS_ipc, sizeof(PS_ipc));
 
         if (x < (ssize_t)sizeof(PS_ipc)) {
-            int xerrno = errno;
-            debugs(54, DBG_CRITICAL, "ipcCreate: CHILD: write FD " << c2p[1] << ": " << xstrerr(xerrno));
+            debugs(54, DBG_CRITICAL, "ipcCreate: CHILD: write FD " << c2p[1] << ": " << xstrerror());
             debugs(54, DBG_CRITICAL, "ipcCreate: CHILD: " << prog << ": socket exchange failed");
+
             ipcSend(cwfd, err_string, strlen(err_string));
             goto cleanup;
         }
@@ -648,9 +636,9 @@ ipc_thread_1(void *in_params)
         x = read(p2c[0], buf1, bufSz-1);
 
         if (x < 0) {
-            int xerrno = errno;
-            debugs(54, DBG_CRITICAL, "ipcCreate: CHILD: read FD " << p2c[0] << ": " << xstrerr(xerrno));
+            debugs(54, DBG_CRITICAL, "ipcCreate: CHILD: read FD " << p2c[0] << ": " << xstrerror());
             debugs(54, DBG_CRITICAL, "ipcCreate: CHILD: " << prog << ": socket exchange failed");
+
             ipcSend(cwfd, err_string, strlen(err_string));
             goto cleanup;
         } else if (strncmp(buf1, ok_string, strlen(ok_string))) {
@@ -696,8 +684,7 @@ ipc_thread_1(void *in_params)
     thread = (HANDLE)_beginthreadex(NULL, 0, ipc_thread_2, &thread_params, 0, NULL);
 
     if (!thread) {
-        int xerrno = errno;
-        debugs(54, DBG_CRITICAL, "ipcCreate: CHILD: _beginthreadex: " << xstrerr(xerrno));
+        debugs(54, DBG_CRITICAL, "ipcCreate: CHILD: _beginthreadex: " << xstrerror());
         ipcSend(cwfd, err_string, strlen(err_string));
         goto cleanup;
     }

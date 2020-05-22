@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -52,6 +52,7 @@ void Comm::CallbackTableDestruct() STUB
 #include "comm/Loops.h"
 void Comm::SelectLoopInit(void) STUB
 void Comm::SetSelect(int, unsigned int, PF *, void *, time_t) STUB
+void Comm::ResetSelect(int) STUB
 Comm::Flag Comm::DoSelect(int) STUB_RETVAL(Comm::COMM_ERROR)
 void Comm::QuickPollRequired(void) STUB
 
@@ -77,6 +78,4 @@ void Comm::Write(const Comm::ConnectionPointer &, const char *, int, AsyncCall::
 void Comm::Write(const Comm::ConnectionPointer &conn, MemBuf *mb, AsyncCall::Pointer &callback) STUB
 void Comm::WriteCancel(const Comm::ConnectionPointer &conn, const char *reason) STUB
 /*PF*/ void Comm::HandleWrite(int, void*) STUB
-
-std::ostream &operator << (std::ostream &os, const Comm::Connection &conn) STUB_RETVAL(os << "[Connection object]")
 

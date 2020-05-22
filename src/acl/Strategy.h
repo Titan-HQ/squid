@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -11,22 +11,17 @@
 
 #include "acl/Acl.h"
 #include "acl/Data.h"
-#include "acl/Options.h"
 
 class ACLFilledChecklist;
 
 template<class M>
 
-/// A matching algorithm.
 class ACLStrategy
 {
 
 public:
     typedef M MatchType;
-
-    /* Replicate ACL API parts relevant to the matching algorithm. */
-    virtual const Acl::Options &options() { return Acl::NoOptions(); }
-    virtual int match (ACLData<M> * &, ACLFilledChecklist *) = 0;
+    virtual int match (ACLData<M> * &, ACLFilledChecklist *, ACLFlags &) = 0;
     virtual bool requiresRequest() const {return false;}
 
     virtual bool requiresReply() const {return false;}

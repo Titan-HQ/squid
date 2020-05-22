@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -46,11 +46,11 @@ StreamTest::getACString() const
 }
 
 int
-main(int, char *[])
+main(int argc, char **argv)
 {
     Debug::Levels[1] = 8;
     debugs (1,1,"test" << "string");
-    debugs (1,9,"do not show this" << "string");
+    debugs (1,9,"dont show this" << "string");
     debugs (1,1,"test" << "string");
     debugs (1,1,"test" << "string");
     if (true)
@@ -61,6 +61,6 @@ main(int, char *[])
     StreamTest *streamPointer (&aStreamObject);
     debugs(1, DBG_IMPORTANT,aStreamObject);
     debugs(1, DBG_IMPORTANT,streamPointer->getAnInt() << " " << aStreamObject.getACString());
-    return EXIT_SUCCESS;
+    return 0;
 }
 

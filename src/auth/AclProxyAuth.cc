@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -18,7 +18,6 @@
 #include "auth/User.h"
 #include "auth/UserRequest.h"
 #include "client_side.h"
-#include "http/Stream.h"
 #include "HttpRequest.h"
 
 ACLProxyAuth::~ACLProxyAuth()
@@ -26,14 +25,9 @@ ACLProxyAuth::~ACLProxyAuth()
     delete data;
 }
 
-ACLProxyAuth::ACLProxyAuth(ACLData<char const *> *newData, char const *theType) :
-    data(newData),
-    type_(theType)
-{}
+ACLProxyAuth::ACLProxyAuth(ACLData<char const *> *newData, char const *theType) : data(newData), type_(theType) {}
 
-ACLProxyAuth::ACLProxyAuth(ACLProxyAuth const &old) :
-    data(old.data->clone()),
-    type_(old.type_)
+ACLProxyAuth::ACLProxyAuth(ACLProxyAuth const &old) : data(old.data->clone()), type_(old.type_)
 {}
 
 ACLProxyAuth &
@@ -48,12 +42,6 @@ char const *
 ACLProxyAuth::typeString() const
 {
     return type_;
-}
-
-void
-ACLProxyAuth::parseFlags()
-{
-    ParseFlags(Acl::NoOptions(), data->supportedFlags());
 }
 
 void
@@ -177,10 +165,10 @@ int
 ACLProxyAuth::matchProxyAuth(ACLChecklist *cl)
 {
     ACLFilledChecklist *checklist = Filled(cl);
-    if (!checklist->request->flags.sslBumped) {
-        if (!authenticateUserAuthenticated(checklist->auth_user_request)) {
-            return 0;
-        }
+    if (checklist->request->flags.sslBumped)
+        return 1; // AuthenticateAcl() already handled this bumped request
+    if (!authenticateUserAuthenticated(Filled(checklist)->auth_user_request)) {
+        return 0;
     }
     /* check to see if we have matched the user-acl before */
     int result = cacheMatchAcl(&checklist->auth_user_request->user()->proxy_match_cache, checklist);

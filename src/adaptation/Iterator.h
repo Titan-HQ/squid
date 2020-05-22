@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -13,7 +13,9 @@
 #include "adaptation/Initiate.h"
 #include "adaptation/Initiator.h"
 #include "adaptation/ServiceGroups.h"
-#include "http/forward.h"
+
+class HttpMsg;
+class HttpRequest;
 
 namespace Adaptation
 {
@@ -30,10 +32,8 @@ namespace Adaptation
 /// iterates services in ServiceGroup, starting adaptation launchers
 class Iterator: public Initiate, public Initiator
 {
-    CBDATA_CLASS(Iterator);
-
 public:
-    Iterator(Http::Message *virginHeader, HttpRequest *virginCause,
+    Iterator(HttpMsg *virginHeader, HttpRequest *virginCause,
              AccessLogEntry::Pointer &alp,
              const Adaptation::ServiceGroupPointer &aGroup);
     virtual ~Iterator();
@@ -59,18 +59,20 @@ protected:
     /// creates service filter for the current step
     ServiceFilter filter() const;
 
-    void handleAdaptedHeader(Http::Message *msg);
+    void handleAdaptedHeader(HttpMsg *msg);
     void handleAdaptationBlock(const Answer &answer);
     void handleAdaptationError(bool final);
 
     ServiceGroupPointer theGroup; ///< the service group we are iterating
     ServicePlan thePlan; ///< which services to use and in what order
-    Http::Message *theMsg; ///< the message being adapted (virgin for each step)
+    HttpMsg *theMsg; ///< the message being adapted (virgin for each step)
     HttpRequest *theCause; ///< the cause of the original virgin message
     AccessLogEntry::Pointer al; ///< info for the future access.log entry
     CbcPointer<Adaptation::Initiate> theLauncher; ///< current transaction launcher
     int iterations; ///< number of steps initiated
     bool adapted; ///< whether the virgin message has been replaced
+
+    CBDATA_CLASS2(Iterator);
 };
 
 } // namespace Adaptation

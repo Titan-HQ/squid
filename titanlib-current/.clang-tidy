@@ -1,0 +1,4 @@
+Checks: '-*,clang-analyzer-cplusplus-*,clang-analyzer-core-*,modernize-*,llvm-*,misc-*,-misc-unused-parameters'
+CheckOptions:
+
+

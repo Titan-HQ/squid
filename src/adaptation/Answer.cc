@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -11,7 +11,6 @@
 #include "squid.h"
 #include "adaptation/Answer.h"
 #include "base/AsyncJobCalls.h"
-#include "http/Message.h"
 
 Adaptation::Answer
 Adaptation::Answer::Error(bool final)
@@ -23,7 +22,7 @@ Adaptation::Answer::Error(bool final)
 }
 
 Adaptation::Answer
-Adaptation::Answer::Forward(Http::Message *aMsg)
+Adaptation::Answer::Forward(HttpMsg *aMsg)
 {
     Answer answer(akForward);
     answer.message = aMsg;

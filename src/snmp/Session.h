@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -25,13 +25,15 @@ public:
     Session();
     Session(const Session& session);
     Session& operator = (const Session& session);
-    ~Session() { reset(); }
+    ~Session();
 
     void pack(Ipc::TypedMsgHdr& msg) const; ///< prepare for sendmsg()
     void unpack(const Ipc::TypedMsgHdr& msg); ///< restore struct from the message
+    void clear(); ///< clear internal members
 
 private:
-    void reset(); ///< free internal members
+    void free();  ///< free internal members
+    void assign(const Session& session); ///< perform full assignment
 };
 
 } // namespace Snmp

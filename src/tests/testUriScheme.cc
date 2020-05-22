@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -11,6 +11,8 @@
 #include <cppunit/TestAssert.h>
 
 #include "anyp/UriScheme.h"
+#include "Mem.h"
+#include "SquidString.h"
 #include "tests/testUriScheme.h"
 
 #include <sstream>
@@ -111,9 +113,9 @@ testUriScheme::testConstructprotocol_t()
 void
 testUriScheme::testC_str()
 {
-    SBuf lhs("wais");
+    String lhs("wais");
     AnyP::UriScheme wais(AnyP::PROTO_WAIS);
-    SBuf rhs(wais.image());
+    String rhs(wais.c_str());
     CPPUNIT_ASSERT_EQUAL(lhs, rhs);
 }
 
@@ -150,8 +152,8 @@ testUriScheme::testStream()
 {
     std::ostringstream buffer;
     buffer << AnyP::UriScheme(AnyP::PROTO_HTTP);
-    SBuf http_str("http");
-    SBuf from_buf(buffer.str());
+    String http_str("http");
+    String from_buf(buffer.str().c_str());
     CPPUNIT_ASSERT_EQUAL(http_str, from_buf);
 }
 

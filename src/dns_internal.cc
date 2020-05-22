@@ -1,16 +1,15 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
  * Please see the COPYING and CONTRIBUTORS files for details.
  */
 
-/* DEBUG: section 78    DNS lookups; interacts with dns/rfc1035.cc */
+/* DEBUG: section 78    DNS lookups; interacts with lib/rfc1035.c */
 
 #include "squid.h"
 #include "base/InstanceId.h"
-#include "base/RunnersRegistry.h"
 #include "comm.h"
 #include "comm/Connection.h"
 #include "comm/ConnOpener.h"
@@ -18,14 +17,14 @@
 #include "comm/Read.h"
 #include "comm/Write.h"
 #include "dlink.h"
-#include "dns/forward.h"
-#include "dns/rfc3596.h"
 #include "event.h"
 #include "fd.h"
 #include "fde.h"
 #include "ip/tools.h"
+#include "Mem.h"
 #include "MemBuf.h"
 #include "mgr/Registration.h"
+#include "rfc3596.h"
 #include "SquidConfig.h"
 #include "SquidTime.h"
 #include "Store.h"
@@ -41,7 +40,6 @@
 #include <arpa/nameser.h>
 #endif
 #include <cerrno>
-#include <random>
 #if HAVE_RESOLV_H
 #include <resolv.h>
 #endif
@@ -96,124 +94,81 @@ static const char *Rcodes[] = {
     "Bad OPT Version or TSIG Signature Failure"
 };
 
+typedef struct _idns_query idns_query;
+
+typedef struct _ns ns;
+
 typedef struct _sp sp;
 
-class idns_query
-{
-    CBDATA_CLASS(idns_query);
+typedef struct _nsvc nsvc;
 
-public:
-    idns_query() {
-        callback = nullptr;
-        memset(&query, 0, sizeof(query));
-        *buf = 0;
-        *name = 0;
-        *orig = 0;
-        memset(&start_t, 0, sizeof(start_t));
-        memset(&sent_t, 0, sizeof(sent_t));
-        memset(&queue_t, 0, sizeof(queue_t));
-    }
-
-    ~idns_query() {
-        if (message)
-            rfc1035MessageDestroy(&message);
-        delete queue;
-        delete slave;
-        // master is just a back-reference
-        cbdataReferenceDone(callback_data);
-    }
-
+struct _idns_query {
     hash_link hash;
     rfc1035_query query;
     char buf[RESOLV_BUFSZ];
     char name[NS_MAXDNAME + 1];
     char orig[NS_MAXDNAME + 1];
-    ssize_t sz = 0;
-    unsigned short query_id = 0; ///< random query ID sent to server; changes with every query sent
-    InstanceId<idns_query> xact_id; ///< identifies our "transaction", stays constant when query is retried
+    ssize_t sz;
+    unsigned short query_id; /// random query ID sent to server; changes with every query sent
+    InstanceId<idns_query> xact_id; /// identifies our "transaction", stays constant when query is retried
 
-    int nsends = 0;
-    int need_vc = 0;
-    bool permit_mdns = false;
-    int pending = 0;
+    int nsends;
+    int need_vc;
+    bool permit_mdns;
+    int pending;
 
     struct timeval start_t;
     struct timeval sent_t;
     struct timeval queue_t;
     dlink_node lru;
     IDNSCB *callback;
-    void *callback_data = nullptr;
-    int attempt = 0;
-    int rcode = 0;
-    idns_query *queue = nullptr;
-    idns_query *slave = nullptr;  // single linked list
-    idns_query *master = nullptr; // single pointer to a shared master
-    unsigned short domain = 0;
-    unsigned short do_searchpath = 0;
-    rfc1035_message *message = nullptr;
-    int ancount = 0;
-    const char *error = nullptr;
+    void *callback_data;
+    int attempt;
+    int rcode;
+    idns_query *queue;
+    idns_query *slave;  // single linked list
+    idns_query *master; // single pointer to a shared master
+    unsigned short domain;
+    unsigned short do_searchpath;
+    rfc1035_message *message;
+    int ancount;
+    const char *error;
 };
-
 InstanceIdDefinitions(idns_query,  "dns");
 
-CBDATA_CLASS_INIT(idns_query);
-
-class nsvc
-{
-    CBDATA_CLASS(nsvc);
-
-public:
-    explicit nsvc(size_t nsv) : ns(nsv), msg(new MemBuf()), queue(new MemBuf()) {}
-    ~nsvc();
-
-    size_t ns = 0;
+struct _nsvc {
+    int ns;
     Comm::ConnectionPointer conn;
-    unsigned short msglen = 0;
-    int read_msglen = 0;
-    MemBuf *msg = nullptr;
-    MemBuf *queue = nullptr;
-    bool busy = true;
+    unsigned short msglen;
+    int read_msglen;
+    MemBuf *msg;
+    MemBuf *queue;
+    bool busy;
 };
 
-CBDATA_CLASS_INIT(nsvc);
-
-class ns
-{
-public:
+struct _ns {
     Ip::Address S;
-    int nqueries = 0;
-    int nreplies = 0;
+    int nqueries;
+    int nreplies;
 #if WHEN_EDNS_RESPONSES_ARE_PARSED
-    int last_seen_edns = 0;
+    int last_seen_edns;
 #endif
-    bool mDNSResolver = false;
-    nsvc *vc = nullptr;
+    bool mDNSResolver;
+    nsvc *vc;
 };
-
-namespace Dns
-{
-
-/// manage DNS internal component
-class ConfigRr : public RegisteredRunner
-{
-public:
-    /* RegisteredRunner API */
-    virtual void startReconfigure() override;
-    virtual void endingShutdown() override;
-};
-
-RunnerRegistrationEntry(ConfigRr);
-
-} // namespace Dns
 
 struct _sp {
     char domain[NS_MAXDNAME];
     int queries;
 };
 
-static std::vector<ns> nameservers;
+CBDATA_TYPE(nsvc);
+CBDATA_TYPE(idns_query);
+
+static ns *nameservers = NULL;
 static sp *searchpath = NULL;
+static int nns = 0;
+static int nns_alloc = 0;
 static int nns_mdns_count = 0;
 static int npc = 0;
 static int npc_alloc = 0;
@@ -254,6 +209,7 @@ static OBJH idnsStats;
 static void idnsAddNameserver(const char *buf);
 static void idnsAddMDNSNameservers();
 static void idnsAddPathComponent(const char *buf);
+static void idnsFreeNameservers(void);
 static void idnsFreeSearchpath(void);
 static bool idnsParseNameservers(void);
 static bool idnsParseResolvConf(void);
@@ -279,7 +235,6 @@ static void idnsRcodeCount(int, int);
 static CLCB idnsVCClosed;
 static unsigned short idnsQueryID(void);
 static void idnsSendSlaveAAAAQuery(idns_query *q);
-static void idnsCallbackOnEarlyError(IDNSCB *callback, void *cbdata, const char *error);
 
 static void
 idnsCheckMDNS(idns_query *q)
@@ -305,14 +260,14 @@ idnsAddMDNSNameservers()
     // mDNS resolver addresses are explicit multicast group IPs
     if (Ip::EnableIpv6) {
         idnsAddNameserver("FF02::FB");
-        nameservers.back().S.port(5353);
-        nameservers.back().mDNSResolver = true;
+        nameservers[nns-1].S.port(5353);
+        nameservers[nns-1].mDNSResolver = true;
         ++nns_mdns_count;
     }
 
     idnsAddNameserver("224.0.0.251");
-    nameservers.back().S.port(5353);
-    nameservers.back().mDNSResolver = true;
+    nameservers[nns-1].S.port(5353);
+    nameservers[nns-1].mDNSResolver = true;
 
     ++nns_mdns_count;
 }
@@ -338,14 +293,33 @@ idnsAddNameserver(const char *buf)
         return;
     }
 
-    nameservers.emplace_back(ns());
+    if (nns == nns_alloc) {
+        int oldalloc = nns_alloc;
+        ns *oldptr = nameservers;
+
+        if (nns_alloc == 0)
+            nns_alloc = 2;
+        else
+            nns_alloc <<= 1;
+
+        nameservers = (ns *)xcalloc(nns_alloc, sizeof(*nameservers));
+
+        if (oldptr && oldalloc)
+            memcpy(nameservers, oldptr, oldalloc * sizeof(*nameservers));
+
+        if (oldptr)
+            safe_free(oldptr);
+    }
+
+    assert(nns < nns_alloc);
     A.port(NS_DEFAULTPORT);
-    nameservers.back().S = A;
+    nameservers[nns].S = A;
 #if WHEN_EDNS_RESPONSES_ARE_PARSED
-    nameservers.back().last_seen_edns = RFC1035_DEFAULT_PACKET_SZ;
+    nameservers[nns].last_seen_edns = RFC1035_DEFAULT_PACKET_SZ;
     // TODO generate a test packet to probe this NS from EDNS size and ability.
 #endif
-    debugs(78, 3, "Added nameserver #" << nameservers.size()-1 << " (" << A << ")");
+    debugs(78, 3, "idnsAddNameserver: Added nameserver #" << nns << " (" << A << ")");
+    ++nns;
 }
 
 static void
@@ -378,6 +352,13 @@ idnsAddPathComponent(const char *buf)
 }
 
 static void
+idnsFreeNameservers(void)
+{
+    safe_free(nameservers);
+    nns = nns_alloc = 0;
+}
+
+static void
 idnsFreeSearchpath(void)
 {
     safe_free(searchpath);
@@ -388,9 +369,9 @@ static bool
 idnsParseNameservers(void)
 {
     bool result = false;
-    for (auto &i : Config.dns.nameservers) {
-        debugs(78, DBG_IMPORTANT, "Adding nameserver " << i << " from squid.conf");
-        idnsAddNameserver(i.c_str());
+    for (wordlist *w = Config.dns_nameservers; w; w = w->next) {
+        debugs(78, DBG_IMPORTANT, "Adding nameserver " << w->key << " from squid.conf");
+        idnsAddNameserver(w->key);
         result = true;
     }
     return result;
@@ -403,9 +384,8 @@ idnsParseResolvConf(void)
 #if !_SQUID_WINDOWS_
     FILE *fp = fopen(_PATH_RESCONF, "r");
 
-    if (!fp) {
-        int xerrno = errno;
-        debugs(78, DBG_IMPORTANT, "" << _PATH_RESCONF << ": " << xstrerr(xerrno));
+    if (fp == NULL) {
+        debugs(78, DBG_IMPORTANT, "" << _PATH_RESCONF << ": " << xstrerror());
         return false;
     }
 
@@ -731,12 +711,12 @@ idnsStats(StoreEntry * sentry)
     storeAppendPrintf(sentry, "IP ADDRESS                                     # QUERIES # REPLIES Type\n");
     storeAppendPrintf(sentry, "---------------------------------------------- --------- --------- --------\n");
 
-    for (const auto &server : nameservers) {
+    for (i = 0; i < nns; ++i) {
         storeAppendPrintf(sentry, "%-45s %9d %9d %s\n",  /* Let's take the maximum: (15 IPv4/45 IPv6) */
-                          server.S.toStr(buf,MAX_IPSTRLEN),
-                          server.nqueries,
-                          server.nreplies,
-                          server.mDNSResolver?"multicast":"recurse");
+                          nameservers[i].S.toStr(buf,MAX_IPSTRLEN),
+                          nameservers[i].nqueries,
+                          nameservers[i].nreplies,
+                          nameservers[i].mDNSResolver?"multicast":"recurse");
     }
 
     storeAppendPrintf(sentry, "\nRcode Matrix:\n");
@@ -786,7 +766,7 @@ idnsTickleQueue(void)
 }
 
 static void
-idnsSentQueryVC(const Comm::ConnectionPointer &conn, char *, size_t size, Comm::Flag flag, int, void *data)
+idnsSentQueryVC(const Comm::ConnectionPointer &conn, char *buf, size_t size, Comm::Flag flag, int xerrno, void *data)
 {
     nsvc * vc = (nsvc *)data;
 
@@ -816,7 +796,7 @@ idnsDoSendQueryVC(nsvc *vc)
         return;
 
     // if retrying after a TC UDP response, our close handler cb may be pending
-    if (fd_table[vc->conn->fd].closing())
+    if (-1==vc->conn->fd || fd_table[vc->conn->fd].closing())
         return;
 
     MemBuf *mb = vc->queue;
@@ -840,13 +820,13 @@ idnsDoSendQueryVC(nsvc *vc)
 }
 
 static void
-idnsInitVCConnected(const Comm::ConnectionPointer &conn, Comm::Flag status, int, void *data)
+idnsInitVCConnected(const Comm::ConnectionPointer &conn, Comm::Flag status, int xerrno, void *data)
 {
     nsvc * vc = (nsvc *)data;
 
     if (status != Comm::OK || !conn) {
         char buf[MAX_IPSTRLEN] = "";
-        if (vc->ns < nameservers.size())
+        if (vc->ns < nns)
             nameservers[vc->ns].S.toStr(buf,MAX_IPSTRLEN);
         debugs(78, DBG_IMPORTANT, HERE << "Failed to connect to nameserver " << buf << " using TCP.");
         return;
@@ -866,24 +846,25 @@ static void
 idnsVCClosed(const CommCloseCbParams &params)
 {
     nsvc * vc = (nsvc *)params.data;
-    delete vc;
-}
-
-nsvc::~nsvc()
-{
-    delete queue;
-    delete msg;
-    if (ns < nameservers.size()) // XXX: idnsShutdownAndFreeState may have freed nameservers[]
-        nameservers[ns].vc = NULL;
+    delete vc->queue;
+    delete vc->msg;
+    vc->conn = NULL;
+    if (vc->ns < nns) // XXX: dnsShutdown may have freed nameservers[]
+        nameservers[vc->ns].vc = NULL;
+    cbdataFree(vc);
 }
 
 static void
-idnsInitVC(size_t nsv)
+idnsInitVC(int nsv)
 {
-    assert(nsv < nameservers.size());
-    nsvc *vc = new nsvc(nsv);
+    nsvc *vc = cbdataAlloc(nsvc);
+    assert(nsv < nns);
     assert(vc->conn == NULL); // MUST be NULL from the construction process!
     nameservers[nsv].vc = vc;
+    vc->ns = nsv;
+    vc->queue = new MemBuf;
+    vc->msg = new MemBuf;
+    vc->busy = 1;
 
     Comm::ConnectionPointer conn = new Comm::Connection();
 
@@ -903,9 +884,9 @@ idnsInitVC(size_t nsv)
 }
 
 static void
-idnsSendQueryVC(idns_query * q, size_t nsn)
+idnsSendQueryVC(idns_query * q, int nsn)
 {
-    assert(nsn < nameservers.size());
+    assert(nsn < nns);
     if (nameservers[nsn].vc == NULL)
         idnsInitVC(nsn);
 
@@ -932,19 +913,12 @@ idnsSendQueryVC(idns_query * q, size_t nsn)
 static void
 idnsSendQuery(idns_query * q)
 {
-    // XXX: DNS sockets get closed during reconfigure produces a race between
-    // any already active connections (or ones received between closing DNS
-    // sockets and server listening sockets) and the reconfigure completing
-    // (Runner syncConfig() being run). Transactions which loose this race will
-    // produce DNS timeouts (or whatever the caller set) as their queries never
-    // get queued to be re-tried after the DNS socekts are re-opened.
-
     if (DnsSocketA < 0 && DnsSocketB < 0) {
         debugs(78, DBG_IMPORTANT, "WARNING: idnsSendQuery: Can't send query, no DNS socket!");
         return;
     }
 
-    if (nameservers.empty()) {
+    if (nns <= 0) {
         debugs(78, DBG_IMPORTANT, "WARNING: idnsSendQuery: Can't send query, no DNS nameservers known!");
         return;
     }
@@ -954,15 +928,14 @@ idnsSendQuery(idns_query * q)
     assert(q->lru.prev == NULL);
 
     int x = -1, y = -1;
-    size_t nsn;
-    const auto nsCount = nameservers.size();
+    int nsn;
 
     do {
         // only use mDNS resolvers for mDNS compatible queries
         if (!q->permit_mdns)
-            nsn = nns_mdns_count + q->nsends % (nsCount - nns_mdns_count);
+            nsn = nns_mdns_count + q->nsends % (nns-nns_mdns_count);
         else
-            nsn = q->nsends % nsCount;
+            nsn = q->nsends % nns;
 
         if (q->need_vc) {
             idnsSendQueryVC(q, nsn);
@@ -973,18 +946,17 @@ idnsSendQuery(idns_query * q)
             else if (DnsSocketA >= 0)
                 x = comm_udp_sendto(DnsSocketA, nameservers[nsn].S, q->buf, q->sz);
         }
-        int xerrno = errno;
 
         ++ q->nsends;
 
         q->sent_t = current_time;
 
         if (y < 0 && nameservers[nsn].S.isIPv6())
-            debugs(50, DBG_IMPORTANT, MYNAME << "FD " << DnsSocketB << ": sendto: " << xstrerr(xerrno));
+            debugs(50, DBG_IMPORTANT, "idnsSendQuery: FD " << DnsSocketB << ": sendto: " << xstrerror());
         if (x < 0 && nameservers[nsn].S.isIPv4())
-            debugs(50, DBG_IMPORTANT, MYNAME << "FD " << DnsSocketA << ": sendto: " << xstrerr(xerrno));
+            debugs(50, DBG_IMPORTANT, "idnsSendQuery: FD " << DnsSocketA << ": sendto: " << xstrerror());
 
-    } while ( (x<0 && y<0) && q->nsends % nsCount != 0);
+    } while ( (x<0 && y<0) && q->nsends % nns != 0);
 
     if (y > 0) {
         fd_bytes(DnsSocketB, y, FD_WRITE);
@@ -1003,7 +975,9 @@ idnsSendQuery(idns_query * q)
 static int
 idnsFromKnownNameserver(Ip::Address const &from)
 {
-    for (int i = 0; static_cast<size_t>(i) < nameservers.size(); ++i) {
+    int i;
+
+    for (i = 0; i < nns; ++i) {
         if (nameservers[i].S != from)
             continue;
 
@@ -1033,14 +1007,11 @@ idnsFindQuery(unsigned short id)
 }
 
 static unsigned short
-idnsQueryID()
+idnsQueryID(void)
 {
-    // NP: apparently ranlux are faster, but not quite as "proven"
-    static std::mt19937 mt(static_cast<uint32_t>(getCurrentTime() & 0xFFFFFFFF));
-    unsigned short id = mt() & 0xFFFF;
+    unsigned short id = squid_random() & 0xFFFF;
     unsigned short first_id = id;
 
-    // ensure temporal uniqueness by looking for an existing use
     while (idnsFindQuery(id)) {
         ++id;
 
@@ -1053,102 +1024,103 @@ idnsQueryID()
     return id;
 }
 
-/// \returns whether master or associated queries are still waiting for replies
-static bool
-idnsStillPending(const idns_query *master)
-{
-    assert(!master->master); // we were given the master transaction
-    for (const idns_query *qi = master; qi; qi = qi->slave) {
-        if (qi->pending)
-            return true;
-    }
-    return false;
-}
-
-static std::ostream &
-operator <<(std::ostream &os, const idns_query &answered)
-{
-    if (answered.error)
-        os << "error \"" << answered.error << "\"";
-    else
-        os << answered.ancount << " records";
-    return os;
-}
-
-static void
-idnsCallbackOnEarlyError(IDNSCB *callback, void *cbdata, const char *error)
-{
-    // A cbdataReferenceValid() check asserts on unlocked cbdata: Early errors,
-    // by definition, happen before we store/cbdataReference() cbdata.
-    debugs(78, 6, "\"" << error << "\" for " << cbdata);
-    callback(cbdata, nullptr, 0, "Internal error", true); // hide error details
-}
-
-/// safely sends one set of DNS records (or an error) to the caller
-static bool
-idnsCallbackOneWithAnswer(IDNSCB *callback, void *cbdata, const idns_query &answered, const bool lastAnswer)
-{
-    if (!cbdataReferenceValid(cbdata))
-        return false;
-    const rfc1035_rr *records = answered.message ? answered.message->answer : nullptr;
-    debugs(78, 6, (lastAnswer ? "last " : "") << answered << " for " << cbdata);
-    callback(cbdata, records, answered.ancount, answered.error, lastAnswer);
-    return true;
-}
-
-static void
-idnsCallbackNewCallerWithOldAnswers(IDNSCB *callback, void *cbdata, const idns_query * const master)
-{
-    const bool lastAnswer = false;
-    // iterate all queries to act on answered ones
-    for (auto query = master; query; query = query->slave) {
-        if (query->pending)
-            continue; // no answer yet
-        if (!idnsCallbackOneWithAnswer(callback, cbdata, *query, lastAnswer))
-            break; // the caller disappeared
-    }
-}
-
-static void
-idnsCallbackAllCallersWithNewAnswer(const idns_query * const answered, const bool lastAnswer)
-{
-    debugs(78, 8, (lastAnswer ? "last " : "") << *answered);
-    const auto master = answered->master ? answered->master : answered;
-    // iterate all queued lookup callers
-    for (auto looker = master; looker; looker = looker->queue) {
-        (void)idnsCallbackOneWithAnswer(looker->callback, looker->callback_data,
-                                        *answered, lastAnswer);
-    }
-}
-
 static void
 idnsCallback(idns_query *q, const char *error)
 {
+    IDNSCB *callback;
+    void *cbdata;
+
     if (error)
         q->error = error;
 
-    auto master = q->master ? q->master : q;
+    if (q->master)
+        q = q->master;
 
-    const bool lastAnswer = !idnsStillPending(master);
-    idnsCallbackAllCallersWithNewAnswer(q, lastAnswer);
-
-    if (!lastAnswer)
-        return; // wait for more answers
-
-    if (master->hash.key) {
-        hash_remove_link(idns_lookup_hash, &master->hash);
-        master->hash.key = nullptr;
+    // If any of our subqueries are still pending then wait for them to complete before continuing
+    for (idns_query *q2 = q; q2; q2 = q2->slave) {
+        if (q2->pending) {
+            return;
+        }
     }
 
-    delete master;
+    /* Merge results */
+    rfc1035_message *message = q->message;
+    q->message = NULL;
+    int n = q->ancount;
+    error = q->error;
+
+    while ( idns_query *q2 = q->slave ) {
+        debugs(78, 6, HERE << "Merging DNS results " << q->name << " A has " << n << " RR, AAAA has " << q2->ancount << " RR");
+        q->slave = q2->slave;
+        if ( !q2->error ) {
+            if (n > 0) {
+                // two sets of RR need merging
+                rfc1035_rr *result = (rfc1035_rr*) xmalloc( sizeof(rfc1035_rr)*(n + q2->ancount) );
+                if (Config.dns.v4_first) {
+                    memcpy(result, message->answer, (sizeof(rfc1035_rr)*n) );
+                    memcpy(result+n, q2->message->answer, (sizeof(rfc1035_rr)*q2->ancount) );
+                } else {
+                    memcpy(result, q2->message->answer, (sizeof(rfc1035_rr)*q2->ancount) );
+                    memcpy(result+q2->ancount, message->answer, (sizeof(rfc1035_rr)*n) );
+                }
+                n += q2->ancount;
+                // HACK WARNING, the answer rr:s have been copied in-place to
+                // result, do not free them here
+                safe_free(message->answer);
+                safe_free(q2->message->answer);
+                message->answer = result;
+                message->ancount += q2->message->ancount;
+            } else {
+                // first response empty or failed, just use the second
+                rfc1035MessageDestroy(&message);
+                message = q2->message;
+                q2->message = NULL;
+                n = q2->ancount;
+                error = NULL;
+            }
+        }
+        rfc1035MessageDestroy(&q2->message);
+        cbdataFree(q2);
+    }
+
+    debugs(78, 6, HERE << "Sending " << n << " (" << (error ? error : "OK") << ") DNS results to caller.");
+
+    callback = q->callback;
+    q->callback = NULL;
+    const rfc1035_rr *answers = message ? message->answer : NULL;
+
+    if (cbdataReferenceValidDone(q->callback_data, &cbdata))
+        callback(cbdata, answers, n, error);
+
+    while (q->queue) {
+        idns_query *q2 = q->queue;
+        q->queue = q2->queue;
+        callback = q2->callback;
+        q2->callback = NULL;
+
+        if (cbdataReferenceValidDone(q2->callback_data, &cbdata))
+            callback(cbdata, answers, n, error);
+
+        cbdataFree(q2);
+    }
+
+    if (q->hash.key) {
+        hash_remove_link(idns_lookup_hash, &q->hash);
+        q->hash.key = NULL;
+    }
+
+    rfc1035MessageDestroy(&message);
+    cbdataFree(q);
 }
 
 static void
-idnsGrokReply(const char *buf, size_t sz, int /*from_ns*/)
+idnsGrokReply(const char *buf, size_t sz, int from_ns)
 {
+    int n;
     rfc1035_message *message = NULL;
+    idns_query *q;
 
-    int n = rfc1035MessageUnpack(buf, sz, &message);
+    n = rfc1035MessageUnpack(buf, sz, &message);
 
     if (message == NULL) {
         debugs(78, DBG_IMPORTANT, "idnsGrokReply: Malformed DNS response");
@@ -1157,7 +1129,7 @@ idnsGrokReply(const char *buf, size_t sz, int /*from_ns*/)
 
     debugs(78, 3, "idnsGrokReply: QID 0x" << std::hex <<   message->id << ", " << std::dec << n << " answers");
 
-    idns_query *q = idnsFindQuery(message->id);
+    q = idnsFindQuery(message->id);
 
     if (q == NULL) {
         debugs(78, 3, "idnsGrokReply: Late response");
@@ -1183,8 +1155,8 @@ idnsGrokReply(const char *buf, size_t sz, int /*from_ns*/)
             // the altered NS was limiting the whole group.
             max_shared_edns = q->edns_seen;
             // may be limited by one of the others still
-            for (const auto &server : nameservers)
-                max_shared_edns = min(max_shared_edns, server.last_seen_edns);
+            for (int i = 0; i < nns; ++i)
+                max_shared_edns = min(max_shared_edns, nameservers[i].last_seen_edns);
         } else {
             nameservers[from_ns].last_seen_edns = q->edns_seen;
             // maybe reduce the global limit downwards to accomodate this NS
@@ -1258,8 +1230,8 @@ idnsGrokReply(const char *buf, size_t sz, int /*from_ns*/)
             while (idns_query *slave = q->slave) {
                 dlinkDelete(&slave->lru, &lru_list);
                 q->slave = slave->slave;
-                slave->slave = NULL;
-                delete slave;
+                rfc1035MessageDestroy(&slave->message);
+                cbdataFree(slave);
             }
 
             // Build new query
@@ -1294,7 +1266,7 @@ idnsGrokReply(const char *buf, size_t sz, int /*from_ns*/)
 }
 
 static void
-idnsRead(int fd, void *)
+idnsRead(int fd, void *data)
 {
     int *N = &incoming_sockets_accepted;
     int len;
@@ -1327,8 +1299,7 @@ idnsRead(int fd, void *)
             break;
 
         if (len < 0) {
-            int xerrno = errno;
-            if (ignoreErrno(xerrno))
+            if (ignoreErrno(errno))
                 break;
 
 #if _SQUID_LINUX_
@@ -1336,9 +1307,10 @@ idnsRead(int fd, void *)
              * return ECONNREFUSED when sendto() fails and generates an ICMP
              * port unreachable message. */
             /* or maybe an EHOSTUNREACH "No route to host" message */
-            if (xerrno != ECONNREFUSED && xerrno != EHOSTUNREACH)
+            if (errno != ECONNREFUSED && errno != EHOSTUNREACH)
 #endif
-                debugs(50, DBG_IMPORTANT, MYNAME << "FD " << fd << " recvfrom: " << xstrerr(xerrno));
+
+                debugs(50, DBG_IMPORTANT, "idnsRead: FD " << fd << " recvfrom: " << xstrerror());
 
             break;
         }
@@ -1379,18 +1351,17 @@ idnsRead(int fd, void *)
 }
 
 static void
-idnsCheckQueue(void *)
+idnsCheckQueue(void *unused)
 {
     dlink_node *n;
     dlink_node *p = NULL;
     idns_query *q;
     event_queued = 0;
 
-    if (nameservers.empty())
+    if (0 == nns)
         /* name servers went away; reconfiguring or shutting down */
         return;
 
-    const auto nsCount = nameservers.size();
     for (n = lru_list.tail; n; n = p) {
 
         p = n->prev;
@@ -1401,7 +1372,7 @@ idnsCheckQueue(void *)
             break;
 
         /* Query timer still running? */
-        if ((time_msec_t)tvSubMsec(q->sent_t, current_time) < (Config.Timeout.idns_retransmit * 1 << ((q->nsends - 1) / nsCount))) {
+        if ((time_msec_t)tvSubMsec(q->sent_t, current_time) < (Config.Timeout.idns_retransmit * 1 << ((q->nsends - 1) / nns))) {
             dlinkDelete(&q->lru, &lru_list);
             q->queue_t = current_time;
             dlinkAdd(q, &q->lru, &lru_list);
@@ -1434,7 +1405,7 @@ idnsCheckQueue(void *)
 }
 
 static void
-idnsReadVC(const Comm::ConnectionPointer &conn, char *buf, size_t len, Comm::Flag flag, int, void *data)
+idnsReadVC(const Comm::ConnectionPointer &conn, char *buf, size_t len, Comm::Flag flag, int xerrno, void *data)
 {
     nsvc * vc = (nsvc *)data;
 
@@ -1456,7 +1427,7 @@ idnsReadVC(const Comm::ConnectionPointer &conn, char *buf, size_t len, Comm::Fla
         return;
     }
 
-    assert(vc->ns < nameservers.size());
+    assert(vc->ns < nns);
     debugs(78, 3, HERE << conn << ": received " << vc->msg->contentSize() << " bytes via TCP from " << nameservers[vc->ns].S << ".");
 
     idnsGrokReply(vc->msg->buf, vc->msg->contentSize(), vc->ns);
@@ -1467,7 +1438,7 @@ idnsReadVC(const Comm::ConnectionPointer &conn, char *buf, size_t len, Comm::Fla
 }
 
 static void
-idnsReadVCHeader(const Comm::ConnectionPointer &conn, char *buf, size_t len, Comm::Flag flag, int, void *data)
+idnsReadVCHeader(const Comm::ConnectionPointer &conn, char *buf, size_t len, Comm::Flag flag, int xerrno, void *data)
 {
     nsvc * vc = (nsvc *)data;
 
@@ -1523,13 +1494,24 @@ idnsRcodeCount(int rcode, int attempt)
             ++ RcodeMatrix[rcode][attempt];
 }
 
+/* ====================================================================== */
+
+static void
+idnsRegisterWithCacheManager(void)
+{
+    Mgr::RegisterAction("idns", "Internal DNS Statistics", idnsStats, 0, 1);
+}
+
 void
-Dns::Init(void)
+dnsInit(void)
 {
     static int init = 0;
 
+    CBDATA_INIT_TYPE(nsvc);
+    CBDATA_INIT_TYPE(idns_query);
+
     if (DnsSocketA < 0 && DnsSocketB < 0) {
-        Ip::Address addrV6; // since we do not want to alter Config.Addrs.udp_* and do not have one of our own.
+        Ip::Address addrV6; // since we don't want to alter Config.Addrs.udp_* and dont have one of our own.
 
         if (!Config.Addrs.udp_outgoing.isNoAddr())
             addrV6 = Config.Addrs.udp_outgoing;
@@ -1575,7 +1557,7 @@ Dns::Init(void)
         }
     }
 
-    assert(nameservers.empty());
+    assert(0 == nns);
     idnsAddMDNSNameservers();
     bool nsFound = idnsParseNameservers();
 
@@ -1602,6 +1584,7 @@ Dns::Init(void)
     }
 
     if (!init) {
+        memDataInit(MEM_IDNS_QUERY, "idns_query", sizeof(idns_query), 0);
         memset(RcodeMatrix, '\0', sizeof(RcodeMatrix));
         idns_lookup_hash = hash_create((HASHCMP *) strcmp, 103, hash_string);
         ++init;
@@ -1614,16 +1597,14 @@ Dns::Init(void)
     }
 #endif
 
-    Mgr::RegisterAction("idns", "Internal DNS Statistics", idnsStats, 0, 1);
+    idnsRegisterWithCacheManager();
 }
 
-static void
-idnsShutdownAndFreeState(const char *reason)
+void
+dnsShutdown(void)
 {
     if (DnsSocketA < 0 && DnsSocketB < 0)
         return;
-
-    debugs(78, 2, reason << ": Closing DNS sockets");
 
     if (DnsSocketA >= 0 ) {
         comm_close(DnsSocketA);
@@ -1635,53 +1616,40 @@ idnsShutdownAndFreeState(const char *reason)
         DnsSocketB = -1;
     }
 
-    for (const auto &server : nameservers) {
-        if (const auto vc = server.vc) {
+    for (int i = 0; i < nns; ++i) {
+        if (nsvc *vc = nameservers[i].vc) {
             if (Comm::IsConnOpen(vc->conn))
                 vc->conn->close();
         }
     }
 
     // XXX: vcs are not closed/freed yet and may try to access nameservers[]
-    nameservers.clear();
+    idnsFreeNameservers();
     idnsFreeSearchpath();
-}
-
-void
-Dns::ConfigRr::endingShutdown()
-{
-    idnsShutdownAndFreeState("Shutdown");
-}
-
-void
-Dns::ConfigRr::startReconfigure()
-{
-    idnsShutdownAndFreeState("Reconfigure");
 }
 
 static int
 idnsCachedLookup(const char *key, IDNSCB * callback, void *data)
 {
+    idns_query *q;
+
     idns_query *old = (idns_query *) hash_lookup(idns_lookup_hash, key);
 
     if (!old)
         return 0;
 
-    idns_query *q = new idns_query;
+    q = cbdataAlloc(idns_query);
+    // idns_query is POD so no constructors are called after allocation
+    q->xact_id.change();
     // no query_id on this instance.
 
     q->callback = callback;
+
     q->callback_data = cbdataReference(data);
 
     q->queue = old->queue;
-    old->queue = q;
 
-    // This check must follow cbdataReference() above because our callback code
-    // needs a locked cbdata to call cbdataReferenceValid().
-    if (idnsStillPending(old))
-        idnsCallbackNewCallerWithOldAnswers(callback, data, old);
-    // else: idns_lookup_hash is not a cache so no pending lookups means we are
-    // in a reentrant lookup and will be called back when dequeued.
+    old->queue = q;
 
     return 1;
 }
@@ -1694,6 +1662,7 @@ idnsStartQuery(idns_query *q, IDNSCB * callback, void *data)
     q->callback_data = cbdataReference(data);
 
     q->hash.key = q->orig;
+    q->hash.next=NULL;
     hash_join(idns_lookup_hash, &q->hash);
 
     idnsSendQuery(q);
@@ -1702,23 +1671,21 @@ idnsStartQuery(idns_query *q, IDNSCB * callback, void *data)
 static void
 idnsSendSlaveAAAAQuery(idns_query *master)
 {
-    idns_query *q = new idns_query;
+    idns_query *q = cbdataAlloc(idns_query);
     memcpy(q->name, master->name, sizeof(q->name));
     memcpy(q->orig, master->orig, sizeof(q->orig));
     q->master = master;
     q->query_id = idnsQueryID();
     q->sz = rfc3596BuildAAAAQuery(q->name, q->buf, sizeof(q->buf), q->query_id, &q->query, Config.dns.packet_max);
+    q->start_t = master->start_t;
+    q->slave = master->slave;
 
     debugs(78, 3, HERE << "buf is " << q->sz << " bytes for " << q->name <<
            ", id = 0x" << std::hex << q->query_id);
     if (!q->sz) {
-        delete q;
+        cbdataFree(q);
         return;
     }
-
-    q->start_t = master->start_t;
-    q->slave = master->slave;
-
     idnsCheckMDNS(q);
     master->slave = q;
     idnsSendQuery(q);
@@ -1732,18 +1699,20 @@ idnsALookup(const char *name, IDNSCB * callback, void *data)
     // Prevent buffer overflow on q->name
     if (nameLength > NS_MAXDNAME) {
         debugs(23, DBG_IMPORTANT, "SECURITY ALERT: DNS name too long to perform lookup: '" << name << "'. see access.log for details.");
-        idnsCallbackOnEarlyError(callback, data, "huge name");
+        callback(data, NULL, 0, "Internal error");
         return;
     }
 
     if (idnsCachedLookup(name, callback, data))
         return;
 
-    idns_query *q = new idns_query;
+    idns_query *q = cbdataAlloc(idns_query);
+    // idns_query is POD so no constructors are called after allocation
+    q->xact_id.change();
     q->query_id = idnsQueryID();
 
     int nd = 0;
-    for (size_t i = 0; i < nameLength; ++i)
+    for (unsigned int i = 0; i < nameLength; ++i)
         if (name[i] == '.')
             ++nd;
 
@@ -1768,8 +1737,8 @@ idnsALookup(const char *name, IDNSCB * callback, void *data)
 
     if (q->sz < 0) {
         /* problem with query data -- query not sent */
-        idnsCallbackOnEarlyError(callback, data, "rfc3596BuildAQuery error");
-        delete q;
+        callback(data, NULL, 0, "Internal error");
+        cbdataFree(q);
         return;
     }
 
@@ -1781,16 +1750,22 @@ idnsALookup(const char *name, IDNSCB * callback, void *data)
 
     if (Ip::EnableIpv6)
         idnsSendSlaveAAAAQuery(q);
+
 }
 
 void
 idnsPTRLookup(const Ip::Address &addr, IDNSCB * callback, void *data)
 {
+    idns_query *q;
+
     char ip[MAX_IPSTRLEN];
 
     addr.toStr(ip,MAX_IPSTRLEN);
 
-    idns_query *q = new idns_query;
+    q = cbdataAlloc(idns_query);
+
+    // idns_query is POD so no constructors are called after allocation
+    q->xact_id.change();
     q->query_id = idnsQueryID();
 
     if (addr.isIPv6()) {
@@ -1806,13 +1781,13 @@ idnsPTRLookup(const Ip::Address &addr, IDNSCB * callback, void *data)
 
     if (q->sz < 0) {
         /* problem with query data -- query not sent */
-        idnsCallbackOnEarlyError(callback, data, "rfc3596BuildPTRQuery error");
-        delete q;
+        callback(data, NULL, 0, "Internal error");
+        cbdataFree(q);
         return;
     }
 
     if (idnsCachedLookup(q->query.name, callback, data)) {
-        delete q;
+        cbdataFree(q);
         return;
     }
 
@@ -1830,7 +1805,7 @@ idnsPTRLookup(const Ip::Address &addr, IDNSCB * callback, void *data)
 variable_list *
 snmp_netDnsFn(variable_list * Var, snint * ErrP)
 {
-    int n = 0;
+    int i, n = 0;
     variable_list *Answer = NULL;
     MemBuf tmp;
     debugs(49, 5, "snmp_netDnsFn: Processing request: " << snmpDebugOid(Var->name, Var->name_length, tmp));
@@ -1840,8 +1815,8 @@ snmp_netDnsFn(variable_list * Var, snint * ErrP)
 
     case DNS_REQ:
 
-        for (const auto &server : nameservers)
-            n += server.nqueries;
+        for (i = 0; i < nns; ++i)
+            n += nameservers[i].nqueries;
 
         Answer = snmp_var_new_integer(Var->name, Var->name_length,
                                       n,
@@ -1850,8 +1825,8 @@ snmp_netDnsFn(variable_list * Var, snint * ErrP)
         break;
 
     case DNS_REP:
-        for (const auto &server : nameservers)
-            n += server.nreplies;
+        for (i = 0; i < nns; ++i)
+            n += nameservers[i].nreplies;
 
         Answer = snmp_var_new_integer(Var->name, Var->name_length,
                                       n,
@@ -1861,7 +1836,7 @@ snmp_netDnsFn(variable_list * Var, snint * ErrP)
 
     case DNS_SERVERS:
         Answer = snmp_var_new_integer(Var->name, Var->name_length,
-                                      nameservers.size(),
+                                      nns,
                                       SMI_COUNTER32);
 
         break;

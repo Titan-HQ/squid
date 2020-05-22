@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -44,7 +44,7 @@ extern "C" {
  * \param flags  RFC1738_ESCAPE_NOSPACE   Ignore the space whitespace character.
  * \param flags  RFC1738_ESCAPE_NOPERCENT Ignore the escaping delimiter '%'.
  */
-extern char *rfc1738_do_escape(const char *url, int flags);
+extern char *rfc1738_do_escape(const char *const url,const int flags);
 
 /* Old API functions */
 
@@ -62,7 +62,7 @@ extern char *rfc1738_do_escape(const char *url, int flags);
  * Unescape a URL string according to RFC 1738 specification.
  * String is unescaped in-place
  */
-extern void rfc1738_unescape(char *url);
+extern void rfc1738_unescape(char *const url);
 
 #ifdef __cplusplus
 }

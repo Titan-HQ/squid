@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -11,29 +11,32 @@
 
 #include "acl/Acl.h"
 #include "acl/Data.h"
-#include "http/RequestMethod.h"
+#include "CbDataList.h"
+#include "HttpRequestMethod.h"
 
-#include <list>
-
+/// \ingroup ACLAPI
 class ACLMethodData : public ACLData<HttpRequestMethod>
 {
-    MEMPROXY_CLASS(ACLMethodData);
 
 public:
-    ACLMethodData() {}
+    MEMPROXY_CLASS(ACLMethodData);
+
+    ACLMethodData();
     ACLMethodData(ACLMethodData const &);
     ACLMethodData &operator= (ACLMethodData const &);
     virtual ~ACLMethodData();
     bool match(HttpRequestMethod);
     virtual SBufList dump() const;
     void parse();
-    bool empty() const {return values.empty();}
+    bool empty() const;
     virtual ACLData<HttpRequestMethod> *clone() const;
 
-    std::list<HttpRequestMethod> values;
+    CbDataList<HttpRequestMethod> *values;
 
     static int ThePurgeCount; ///< PURGE methods seen by parse()
 };
+
+MEMPROXY_CLASS_INLINE(ACLMethodData);
 
 #endif /* SQUID_ACLMETHODDATA_H */
 

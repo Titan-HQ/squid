@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -47,7 +47,11 @@ void aclParseAclList(ConfigParser &parser, Acl::Tree **tree, const Any any)
 
 /// \ingroup ACLAPI
 int aclIsProxyAuth(const char *name);
+//titan/titax - start
 /// \ingroup ACLAPI
+bool aclIsTitanAuth(const char *name);
+//titan/titax - end
+
 err_type aclGetDenyInfoPage(AclDenyInfoList ** head, const char *name, int redirect_allowed);
 /// \ingroup ACLAPI
 void aclParseDenyInfoLine(AclDenyInfoList **);

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -9,6 +9,7 @@
 /* DEBUG: section 05    Socket Functions */
 
 #include "squid.h"
+#include "SquidConfig.h"
 #include "comm.h"
 #include "comm/IoCallback.h"
 #include "comm/Loops.h"
@@ -18,8 +19,9 @@
 #include "Debug.h"
 #include "fd.h"
 #include "fde.h"
-#include "sbuf/SBuf.h"
+#include "SBuf.h"
 #include "StatCounters.h"
+//#include "tools.h"
 
 // Does comm check this fd for read readiness?
 // Note that when comm is not monitoring, there can be a pending callback
@@ -54,8 +56,12 @@ Comm::Read(const Comm::ConnectionPointer &conn, AsyncCall::Pointer &callback)
 void
 comm_read_base(const Comm::ConnectionPointer &conn, char *buf, int size, AsyncCall::Pointer &callback)
 {
-    debugs(5, 5, "comm_read, queueing read for " << conn << "; asynCall " << callback);
 
+   if (!isOpen(conn->fd)){
+      debugs(5, 4, HERE<<" fails: FD " << conn->fd << " closed");
+      return;
+   };
+    debugs(5, 5, "comm_read, queueing read for " << conn << "; asynCall " << callback<<"; config:"<<Config.onoff.half_closed_clients);
     /* Make sure we are open and not closing */
     assert(Comm::IsConnOpen(conn));
     assert(!fd_table[conn->fd].closing());
@@ -63,44 +69,69 @@ comm_read_base(const Comm::ConnectionPointer &conn, char *buf, int size, AsyncCa
 
     // Make sure we are either not reading or just passively monitoring.
     // Active/passive conflicts are OK and simply cancel passive monitoring.
-    if (ccb->active()) {
-        // if the assertion below fails, we have an active comm_read conflict
-        assert(fd_table[conn->fd].halfClosedReader != NULL);
-        commStopHalfClosedMonitor(conn->fd);
-        assert(!ccb->active());
-    }
-    ccb->conn = conn;
+    if (ccb){
+       if (ccb->active()) {
 
-    /* Queue the read */
-    ccb->setCallback(Comm::IOCB_READ, callback, (char *)buf, NULL, size);
-    Comm::SetSelect(conn->fd, COMM_SELECT_READ, Comm::HandleRead, ccb, 0);
+          if (Config.onoff.half_closed_clients){
+             if (fd_table[conn->fd].halfClosedReader == NULL && !commHasHalfClosedMonitor(conn->fd)){
+              debugs(5, DBG_IMPORTANT, "\n\t\tcomm_read_base: possible assert on halfClosedReader==NULL:{ conn:" << conn << "; asynCall:" << callback<<"; flags:"
+                    <<conn->flags<<"; bytes_read:"<<fd_table[conn->fd].bytes_read<<"; bytes_written:"<<fd_table[conn->fd].bytes_written<<"; data:["<<(fd_table[conn->fd].read_data?(char*)fd_table[conn->fd].read_data:"NULL")<<"]}\n");
+              assert(fd_table[conn->fd].halfClosedReader != NULL);
+             } else {
+                commStopHalfClosedMonitor(conn->fd);
+             }
+          };
+
+          if (ccb->callback!=callback){
+             ccb->callback->cancel("comm_read_base callback reset");
+             ccb->callback = NULL;
+          }
+       };
+
+       if (ccb->buf && ccb->buf!=buf ) ccb->reset();
+
+       ccb->conn = conn;
+       /* Queue the read */
+       ccb->setCallback(Comm::IOCB_READ, callback, (char *)buf, NULL, size);
+
+       Comm::SetSelect(conn->fd, COMM_SELECT_READ, Comm::HandleRead, ccb, 0);
+    };
 }
 
 Comm::Flag
 Comm::ReadNow(CommIoCbParams &params, SBuf &buf)
 {
+
+   if (!isOpen(params.conn->fd)){
+      debugs(5, 4, HERE<<" fails: FD " << params.conn->fd << " closed");
+      params.flag =  Comm::COMM_ERROR;
+      return params.flag;
+   };
+   if (!fd_table[params.conn->fd].read_method){
+      debugs(5, 4, HERE<<" fails: read_method is empty");
+      params.flag =  Comm::COMM_ERROR;
+      return params.flag;
+   }
     /* Attempt a read */
     ++ statCounter.syscalls.sock.reads;
-    SBuf::size_type sz = buf.spaceSize();
-    if (params.size > 0 && params.size < sz)
-        sz = params.size;
-    char *inbuf = buf.rawAppendStart(sz);
-    errno = 0;
-    const int retval = FD_READ_METHOD(params.conn->fd, inbuf, sz);
+    const SBuf::size_type sz = buf.spaceSize();
+    char *inbuf = buf.rawSpace(sz);
+    errno = 0;    
+    const int retval = (inbuf?(FD_READ_METHOD(params.conn->fd, inbuf, sz)):0);
     params.xerrno = errno;
 
     debugs(5, 3, params.conn << ", size " << sz << ", retval " << retval << ", errno " << params.xerrno);
 
     if (retval > 0) { // data read most common case
-        buf.rawAppendFinish(inbuf, retval);
+        buf.append(inbuf, retval);
         fd_bytes(params.conn->fd, retval, FD_READ);
         params.flag = Comm::OK;
         params.size = retval;
-
+        return params.flag;
     } else if (retval == 0) { // remote closure (somewhat less) common
         // Note - read 0 == socket EOF, which is a valid read.
         params.flag = Comm::ENDFILE;
-
+        return params.flag;
     } else if (retval < 0) { // connection errors are worst-case
         debugs(5, 3, params.conn << " Comm::COMM_ERROR: " << xstrerr(params.xerrno));
         if (ignoreErrno(params.xerrno))
@@ -124,6 +155,22 @@ Comm::ReadNow(CommIoCbParams &params, SBuf &buf)
 void
 Comm::HandleRead(int fd, void *data)
 {
+
+   if (!isOpen(fd)){
+      debugs(5, 4, HERE<<" fails: FD " << fd << " closed");
+      return;
+   };
+   if (!data){
+      debugs(5, 4, HERE<<" fails: IoCallback is empty");
+      return;
+   };
+
+   if (!fd_table[fd].read_method){
+      debugs(5, 4, HERE<<" fails: read_method is empty");
+      return;
+   }
+
+
     Comm::IoCallback *ccb = (Comm::IoCallback *) data;
 
     assert(data == COMMIO_FD_READCB(fd));
@@ -189,24 +236,36 @@ comm_read_cancel(int fd, IOCB *callback, void *data)
         return;
     }
 
+    if (cb->callback==NULL){
+       debugs(5, DBG_IMPORTANT, "\t\tcomm_read_cancel: cb->callback for ("<<fd<<") is NULL");
+       return;
+    }
+
     typedef CommCbFunPtrCallT<CommIoCbPtrFun> Call;
     Call *call = dynamic_cast<Call*>(cb->callback.getRaw());
     if (!call) {
-        debugs(5, 4, "fails: FD " << fd << " lacks callback");
-        return;
-    }
-
+       debugs(5, 4, "fails: FD " << fd << " lacks callback");
+       return;
+    };
     call->cancel("old comm_read_cancel");
 
     typedef CommIoCbParams Params;
     const Params &params = GetCommParams<Params>(cb->callback);
 
     /* Ok, we can be reasonably sure we won't lose any data here! */
-    assert(call->dialer.handler == callback);
-    assert(params.data == data);
 
-    /* Delete the callback */
-    cb->cancel("old comm_read_cancel");
+    if (call->dialer.handler != callback){
+       debugs(5, DBG_IMPORTANT, "\t\tcomm_read_cancel: possible assert on call->dialer.handler != callback :{ L{"<<call->dialer.handler<<"}==P{"<<callback<<"}");
+    }
+    if (params.data != data){
+         debugs(5, DBG_IMPORTANT, "\t\tcomm_read_cancel: possible assert on params.data != data :{ L{"<<(char*)params.data<<"}==P{"<<(char*)data<<"}");
+    }
+
+    if (!cb->callback->canceled()){
+      /* Delete the callback */
+       cb->cancel("old comm_read_cancel");
+    }
+
 
     /* And the IO event */
     Comm::SetSelect(fd, COMM_SELECT_READ, NULL, NULL, 0);

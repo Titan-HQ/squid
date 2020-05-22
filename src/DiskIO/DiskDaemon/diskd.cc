@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -51,7 +51,7 @@ static char *shmbuf;
 static int DebugLevel = 0;
 
 static int
-do_open(diomsg * r, int, const char *buf)
+do_open(diomsg * r, int len, const char *buf)
 {
     int fd;
     file_state *fs;
@@ -73,6 +73,8 @@ do_open(diomsg * r, int, const char *buf)
     fs->id = r->id;
     fs->key = &fs->id;          /* gack */
     fs->fd = fd;
+    fs->next=NULL;
+
     hash_join(hash, (hash_link *) fs);
     DEBUG(2) {
         fprintf(stderr, "%d OPEN  id %d, FD %d, fs %p\n",
@@ -85,7 +87,7 @@ do_open(diomsg * r, int, const char *buf)
 }
 
 static int
-do_close(diomsg * r, int)
+do_close(diomsg * r, int len)
 {
     int fd;
     file_state *fs;
@@ -115,7 +117,7 @@ do_close(diomsg * r, int)
 }
 
 static int
-do_read(diomsg * r, int, char *buf)
+do_read(diomsg * r, int len, char *buf)
 {
     int x;
     int readlen = r->size;
@@ -165,7 +167,7 @@ do_read(diomsg * r, int, char *buf)
 }
 
 static int
-do_write(diomsg * r, int, const char *buf)
+do_write(diomsg * r, int len, const char *buf)
 {
     int wrtlen = r->size;
     int x;
@@ -211,7 +213,7 @@ do_write(diomsg * r, int, const char *buf)
 }
 
 static int
-do_unlink(diomsg * r, int, const char *buf)
+do_unlink(diomsg * r, int len, const char *buf)
 {
     if (unlink(buf) < 0) {
         DEBUG(1) {
@@ -295,8 +297,11 @@ fsHash(const void *key, unsigned int n)
     return (*k & (--n));
 }
 
-extern "C" {
-    static void alarm_handler(int) {}
+SQUIDCEXTERN {
+    static void
+    alarm_handler(int sig) {
+        (void) 0;
+    }
 };
 
 int
@@ -321,7 +326,7 @@ main(int argc, char *argv[])
 
     if (rmsgid < 0) {
         perror("msgget");
-        exit(EXIT_FAILURE);
+        return 1;
     }
 
     key = atoi(argv[2]);
@@ -329,7 +334,7 @@ main(int argc, char *argv[])
 
     if (smsgid < 0) {
         perror("msgget");
-        exit(EXIT_FAILURE);
+        return 1;
     }
 
     key = atoi(argv[3]);
@@ -337,21 +342,21 @@ main(int argc, char *argv[])
 
     if (shmid < 0) {
         perror("shmget");
-        exit(EXIT_FAILURE);
+        return 1;
     }
 
     shmbuf = (char *)shmat(shmid, NULL, 0);
 
     if (shmbuf == (void *) -1) {
         perror("shmat");
-        exit(EXIT_FAILURE);
+        return 1;
     }
 
     hash = hash_create(fsCmp, 1 << 4, fsHash);
     assert(hash);
     if (fcntl(0, F_SETFL, SQUID_NONBLOCK) < 0) {
-        perror(xstrerr(errno));
-        exit(EXIT_FAILURE);
+        perror(xstrerror());
+        return 1;
     }
     memset(&sa, '\0', sizeof(sa));
     sa.sa_handler = alarm_handler;
@@ -413,6 +418,6 @@ main(int argc, char *argv[])
     if (shmctl(shmid, IPC_RMID, 0) < 0)
         perror("shmctl IPC_RMID");
 
-    return EXIT_SUCCESS;
+    return 0;
 }
 

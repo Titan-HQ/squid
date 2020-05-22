@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -17,7 +17,6 @@
 #include "auth/basic/Scheme.h"
 #include "auth/basic/User.h"
 #include "auth/basic/UserRequest.h"
-#include "auth/CredentialsCache.h"
 #include "auth/Gadgets.h"
 #include "auth/State.h"
 #include "cache_cf.h"
@@ -29,7 +28,6 @@
 #include "rfc1738.h"
 #include "SquidTime.h"
 #include "Store.h"
-#include "util.h"
 #include "uudecode.h"
 #include "wordlist.h"
 
@@ -73,7 +71,7 @@ Auth::Basic::Config::type() const
 }
 
 void
-Auth::Basic::Config::fixHeader(Auth::UserRequest::Pointer, HttpReply *rep, Http::HdrType hdrType, HttpRequest *)
+Auth::Basic::Config::fixHeader(Auth::UserRequest::Pointer auth_user_request, HttpReply *rep, http_hdr_type hdrType, HttpRequest * request)
 {
     if (authenticateProgram) {
         debugs(29, 9, "Sending type:" << hdrType << " header: 'Basic realm=\"" << realm << "\"'");
@@ -96,7 +94,7 @@ Auth::Basic::Config::rotateHelpers()
 void
 Auth::Basic::Config::done()
 {
-    Auth::SchemeConfig::done();
+    Auth::Config::done();
 
     authbasic_initialised = 0;
 
@@ -112,40 +110,43 @@ Auth::Basic::Config::done()
 }
 
 bool
-Auth::Basic::Config::dump(StoreEntry * entry, const char *name, Auth::SchemeConfig * scheme) const
+Auth::Basic::Config::dump(StoreEntry * entry, const char *name, Auth::Config * scheme) const
 {
-    if (!Auth::SchemeConfig::dump(entry, name, scheme))
+    if (!Auth::Config::dump(entry, name, scheme))
         return false; // not configured
 
     storeAppendPrintf(entry, "%s basic credentialsttl %d seconds\n", name, (int) credentialsTTL);
     storeAppendPrintf(entry, "%s basic casesensitive %s\n", name, casesensitive ? "on" : "off");
+    storeAppendPrintf(entry, "%s basic utf8 %s\n", name, utf8 ? "on" : "off");
     return true;
 }
 
 Auth::Basic::Config::Config() :
     credentialsTTL( 2*60*60 ),
-    casesensitive(0)
+    casesensitive(0),
+    utf8(0)
 {
     static const SBuf defaultRealm("Squid proxy-caching web server");
     realm = defaultRealm;
 }
 
 void
-Auth::Basic::Config::parse(Auth::SchemeConfig * scheme, int n_configured, char *param_str)
+Auth::Basic::Config::parse(Auth::Config * scheme, int n_configured, char *param_str)
 {
     if (strcmp(param_str, "credentialsttl") == 0) {
         parse_time_t(&credentialsTTL);
     } else if (strcmp(param_str, "casesensitive") == 0) {
         parse_onoff(&casesensitive);
+    } else if (strcmp(param_str, "utf8") == 0) {
+        parse_onoff(&utf8);
     } else
-        Auth::SchemeConfig::parse(scheme, n_configured, param_str);
+        Auth::Config::parse(scheme, n_configured, param_str);
 }
 
 static void
 authenticateBasicStats(StoreEntry * sentry)
 {
-    if (basicauthenticators)
-        basicauthenticators->packStatsInto(sentry, "Basic Authenticator Statistics");
+    helperStats(sentry, basicauthenticators, "Basic Authenticator Statistics");
 }
 
 char *
@@ -207,14 +208,14 @@ Auth::Basic::Config::decode(char const *proxy_auth, const char *aRequestRealm)
     /* permitted because local_basic is purely local function scope. */
     Auth::Basic::User *local_basic = NULL;
 
-    char *separator = strchr(cleartext, ':');
+    char *seperator = strchr(cleartext, ':');
 
     lb = local_basic = new Auth::Basic::User(this, aRequestRealm);
 
-    if (separator) {
+    if (seperator) {
         /* terminate the username */
-        *separator = '\0';
-        local_basic->passwd = xstrdup(separator+1);
+        *seperator = '\0';
+        local_basic->passwd = xstrdup(seperator+1);
     }
 
     if (!casesensitive)
@@ -243,7 +244,7 @@ Auth::Basic::Config::decode(char const *proxy_auth, const char *aRequestRealm)
     /* now lookup and see if we have a matching auth_user structure in memory. */
     Auth::User::Pointer auth_user;
 
-    if (!(auth_user = Auth::Basic::User::Cache()->lookup(lb->userKey()))) {
+    if ((auth_user = findUserInCache(lb->userKey(), Auth::AUTH_BASIC)) == NULL) {
         /* the user doesn't exist in the username cache yet */
         /* save the credentials */
         debugs(29, 9, HERE << "Creating new user '" << lb->username() << "'");
@@ -275,7 +276,7 @@ Auth::Basic::Config::decode(char const *proxy_auth, const char *aRequestRealm)
 /** Initialize helpers and the like for this auth scheme. Called AFTER parsing the
  * config file */
 void
-Auth::Basic::Config::init(Auth::SchemeConfig *)
+Auth::Basic::Config::init(Auth::Config * schemeCfg)
 {
     if (authenticateProgram) {
         authbasic_initialised = 1;

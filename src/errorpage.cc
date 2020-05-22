@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -13,20 +13,23 @@
 #include "clients/forward.h"
 #include "comm/Connection.h"
 #include "comm/Write.h"
+#include "disk.h"
 #include "err_detail_type.h"
 #include "errorpage.h"
 #include "fde.h"
-#include "fs_io.h"
 #include "html_quote.h"
 #include "HttpHeaderTools.h"
 #include "HttpReply.h"
 #include "HttpRequest.h"
+#include "client_side_request.h"
+#include "FwdState.h"
 #include "MemBuf.h"
 #include "MemObject.h"
 #include "rfc1738.h"
 #include "SquidConfig.h"
 #include "Store.h"
 #include "tools.h"
+#include "URL.h"
 #include "wordlist.h"
 #if USE_AUTH
 #include "auth/UserRequest.h"
@@ -35,6 +38,9 @@
 #if USE_OPENSSL
 #include "ssl/ErrorDetailManager.h"
 #endif
+
+#include "TAPE.hxx"
+using namespace titan_v3;
 
 /**
  \defgroup ErrorPageInternal Error Page Internals
@@ -79,16 +85,13 @@ static const struct {
     const char *text;
 }
 
+// Titax.
+// Remove squid signature in errorpage.
 error_hard_text[] = {
 
     {
         ERR_SQUID_SIGNATURE,
-        "\n<br>\n"
-        "<hr>\n"
-        "<div id=\"footer\">\n"
-        "Generated %T by %h (%s)\n"
-        "</div>\n"
-        "</body></html>\n"
+        ""
     },
     {
         TCP_RESET,
@@ -113,6 +116,8 @@ static int error_page_count = 0;
 /// \ingroup ErrorPageInternal
 static MemBuf error_stylesheet;
 
+static MemBuf wt_stylesheet;
+
 static const char *errorFindHardText(err_type type);
 static ErrorDynamicPageInfo *errorDynamicPageInfoCreate(int id, const char *page_name);
 static void errorDynamicPageInfoDestroy(ErrorDynamicPageInfo * info);
@@ -123,14 +128,14 @@ static IOCB errorSendComplete;
 class ErrorPageFile: public TemplateFile
 {
 public:
-    ErrorPageFile(const char *name, const err_type code) : TemplateFile(name,code) {textBuf.init();}
+    ErrorPageFile(const char *name, const err_type code): TemplateFile(name,code) { textBuf.init();}
 
     /// The template text data read from disk
     const char *text() { return textBuf.content(); }
 
 private:
     /// stores the data read from disk to a local buffer
-    virtual bool parse(const char *buf, int len, bool) {
+    virtual bool parse(const char *buf, int len, bool eof) {
         if (len)
             textBuf.append(buf, len);
         return true;
@@ -199,14 +204,23 @@ errorInitialize(void)
 
     error_stylesheet.reset();
 
+    wt_stylesheet.reset();
+
     // look for and load stylesheet into global MemBuf for it.
     if (Config.errorStylesheet) {
         ErrorPageFile tmpl("StylesSheet", ERR_MAX);
         tmpl.loadFromFile(Config.errorStylesheet);
-        error_stylesheet.appendf("%s",tmpl.text());
+        error_stylesheet.Printf("%s",tmpl.text());
     }
 
-#if USE_OPENSSL
+    // look for and load wt stylesheet into global MemBuf for it.
+    if (Config.wtStylesheet) {
+        ErrorPageFile tmpl("WtStylesSheet", ERR_MAX);
+        tmpl.loadFromFile(Config.wtStylesheet);
+        wt_stylesheet.Printf("%s",tmpl.text());
+    }
+
+#if USE_SSL
     Ssl::errorDetailInitialize();
 #endif
 }
@@ -329,17 +343,15 @@ TemplateFile::loadFromFile(const char *path)
 
     if (fd < 0) {
         /* with dynamic locale negotiation we may see some failures before a success. */
-        if (!silent && templateCode < TCP_RESET) {
-            int xerrno = errno;
-            debugs(4, DBG_CRITICAL, "ERROR: loading file '" << path << "': " << xstrerr(xerrno));
-        }
+        if (!silent && templateCode < TCP_RESET)
+            debugs(4, DBG_CRITICAL, HERE << "'" << path << "': " << xstrerror());
         wasLoaded = false;
         return wasLoaded;
     }
 
     while ((len = FD_READ_METHOD(fd, buf, sizeof(buf))) > 0) {
         if (!parse(buf, len, false)) {
-            debugs(4, DBG_CRITICAL, "ERROR: parsing error in template file: " << path);
+            debugs(4, DBG_CRITICAL, HERE << " parse error while reading template file: " << path);
             wasLoaded = false;
             return wasLoaded;
         }
@@ -347,8 +359,7 @@ TemplateFile::loadFromFile(const char *path)
     parse(buf, 0, true);
 
     if (len < 0) {
-        int xerrno = errno;
-        debugs(4, DBG_CRITICAL, MYNAME << "ERROR: failed to fully read: '" << path << "': " << xstrerr(xerrno));
+        debugs(4, DBG_CRITICAL, HERE << "failed to fully read: '" << path << "': " << xstrerror());
     }
 
     file_close(fd);
@@ -373,7 +384,7 @@ bool strHdrAcptLangGetItem(const String &hdr, char *lang, int langLen, size_t &p
          *    with preference given to an exact match.
          */
         bool invalid_byte = false;
-        char *dt = lang;
+	char *dt = lang;
         while (pos < hdr.size() && hdr[pos] != ';' && hdr[pos] != ',' && !xisspace(hdr[pos]) && dt < (lang + (langLen -1)) ) {
             if (!invalid_byte) {
 #if USE_HTTP_VIOLATIONS
@@ -419,7 +430,7 @@ TemplateFile::loadFor(const HttpRequest *request)
     if (loaded()) // already loaded?
         return true;
 
-    if (!request || !request->header.getList(Http::HdrType::ACCEPT_LANGUAGE, &hdr))
+    if (!request || !request->header.getList(HDR_ACCEPT_LANGUAGE, &hdr) )
         return false;
 
     char lang[256];
@@ -549,74 +560,307 @@ errorPageName(int pageId)
 }
 
 ErrorState *
-ErrorState::NewForwarding(err_type type, HttpRequestPointer &request)
+ErrorState::NewForwarding(err_type type, HttpRequest *request)
 {
-    const Http::StatusCode status = (request && request->flags.needValidation) ?
+    assert(request);
+    const Http::StatusCode status = request->flags.needValidation ?
                                     Http::scGatewayTimeout : Http::scServiceUnavailable;
-    return new ErrorState(type, status, request.getRaw());
+    return new ErrorState(type, status, request);
 }
 
+static uint32_t _idctx=0;;
 ErrorState::ErrorState(err_type t, Http::StatusCode status, HttpRequest * req) :
     type(t),
     page_id(t),
+    err_language(NULL),
     httpStatus(status),
-    callback(nullptr)
+#if USE_AUTH
+    auth_user_request (NULL),
+#endif
+    request(NULL),
+    url(NULL),
+    xerrno(0),
+    port(0),
+    dnsError(),
+    ttl(0),
+    src_addr(),
+    redirect_url(NULL),
+    callback(NULL),
+    callback_data(NULL),
+    request_hdrs(NULL),
+    err_msg(NULL),
+#if USE_OPENSSL
+    detail(NULL),
+#endif
+    detailCode(ERR_DETAIL_NONE)
 {
+    memset(&ftp, 0, sizeof(ftp));
+
     if (page_id >= ERR_MAX && ErrorDynamicPages[page_id - ERR_MAX]->page_redirect != Http::scNone)
         httpStatus = ErrorDynamicPages[page_id - ERR_MAX]->page_redirect;
+    _id=++_idctx;
 
-    if (req) {
+    if (req != NULL) {
         request = req;
+        HTTPMSGLOCK(request);
         src_addr = req->client_addr;
-    }
+    };
 }
 
 void
-errorAppendEntry(StoreEntry * entry, ErrorState * err)
-{
-    assert(entry->mem_obj != NULL);
-    assert (entry->isEmpty());
-    debugs(4, 4, "Creating an error page for entry " << entry <<
-           " with errorstate " << err <<
-           " page id " << err->page_id);
+errorAppendEntry(StoreEntry *const entry, ErrorState *const err){
+   assert(err && entry);
+   assert(entry->mem_obj != NULL);
+   assert (entry->isEmpty());
+   debugs(4, 4, "Creating an error page for entry " << entry <<" with errorstate " << err <<" page id " << err->page_id);
 
-    if (entry->store_status != STORE_PENDING) {
-        debugs(4, 2, "Skipping error page due to store_status: " << entry->store_status);
-        /*
-         * If the entry is not STORE_PENDING, then no clients
-         * care about it, and we don't need to generate an
-         * error message
-         */
-        assert(EBIT_TEST(entry->flags, ENTRY_ABORTED));
-        assert(entry->mem_obj->nclients == 0);
-        delete err;
-        return;
-    }
 
-    if (err->page_id == TCP_RESET) {
-        if (err->request) {
-            debugs(4, 2, "RSTing this reply");
-            err->request->flags.resetTcp = true;
-        }
-    }
+   if (entry->store_status != STORE_PENDING) {
+      debugs(4, 2, "Skipping error page due to store_status: " << entry->store_status);
+      /*
+      * If the entry is not STORE_PENDING, then no clients
+      * care about it, and we don't need to generate an
+      * error message
+      */
+      assert(EBIT_TEST(entry->flags, ENTRY_ABORTED));
+      assert(entry->mem_obj->nclients == 0);
 
-    entry->storeErrorResponse(err->BuildHttpReply());
-    delete err;
+      delete err;
+      return;
+   }
+
+   if (err->page_id == TCP_RESET && err->request && (err->request->flags.resetTcp = true)){
+      debugs(4, 2, HERE <<":RSTing this reply:["<<err->request->flags.resetTcp<<"]");
+   };
+
+   HttpRequest *const req=err->request;
+   const cfg::TCFGInfo & _ttncfg=GTAPE.ttncfg;
+   const Http::StatusCode & _status=err->httpStatus;
+   const err_type _etype=err->type;
+
+
+   if (req){
+      IHRequestFlags & _flags=req->flags;
+      if (  _status != Http::scProxyAuthenticationRequired && 
+            _status !=Http::scUnauthorized  && 
+            _etype != ERR_SHUTTING_DOWN) {
+
+         entry->lock("errorAppendEntry");
+         switch (req->ttag.app_type){
+            case txapp_cmd_check_dm:{
+               entry->buffer();
+               HttpReply *const repz =new HttpReply();
+               assert(repz);
+               repz->setHeaders((Http::StatusCode)req->ttag.http.status_code, req->ttag.http.status_msg.c_str(), TITAX_APP_MIME, 0, 0, -1);
+               if (req->ttag.http.status_code!=scOkay)
+               {
+                   //TODO: Which ip address (v4 or v6) to use and under what conditions
+                  repz->header.putStr(HDR_LOCATION,_ttncfg.ip_4_str.c_str());
+               };
+               repz->header.putStr(HDR_WWW_AUTHENTICATE,"titax realm=\"123456789\"");
+               entry->replaceHttpReply( repz );
+            }break;
+            case txapp_cmd_update_from_wada:{
+               entry->buffer();
+               HttpReply *const repz =new HttpReply();
+               assert(repz);
+               if ((_ttncfg.wada_ignore_errors) || (req->get_content_length()==req->ttag.consumed_body_sz && req->ttag.request_error_ctx<READ_RQ_TRY_MAX)){
+                  repz->setHeaders(Http::scOkay, "", TITAX_APP_MIME, 0, 0, -1);
+               } else {
+                  repz->setHeaders(Http::scBadRequest, "", TITAX_APP_MIME, 0, 0, -1);
+               }
+               repz->header.putStr(HDR_WWW_AUTHENTICATE,"titax realm=\"123456789\"");
+               entry->replaceHttpReply( repz );
+            }break;
+            //TODO: temporary solution until we move handling of the portal page to dynamic backend and redo the auth. UI Page
+            case txapp_cmd_forward_auth_portal:break;
+            case txapp_cmd_none:
+            default:{
+               CbcPointer<ConnStateData> & ccmgr=err->request->clientConnectionManager;
+
+               if (req->can_report_errors()){
+                  switch(req->get_method()){
+                     case METHOD_HEAD:{
+                        entry->buffer();
+                        HttpReply *const repz =new HttpReply();
+                        assert(repz);
+                        repz->setHeaders((Http::StatusCode)req->ttag.http.status_code, req->ttag.http.status_msg.c_str(), 0, 0, 0, -1);
+                        entry->replaceHttpReply( repz );
+                     }break;
+                     default:{
+                        if (MemObject * const _mem_obj=entry->mem_obj){
+                              HTTPMSGUNLOCK(_mem_obj->request);
+                        };
+                        _flags.internal=false;//fix for infinite loop when handling blocked internal requests
+
+                        if (  ( !entry->beingReusedByTitan || 
+                                 //don't forward current request if ssl error is present
+                              ( req->is_target_server() && !_flags.ttn_ssl_error ) ) &&
+                              ccmgr.valid() && 
+                              req->redirect2bp( static_cast<t_err_type>(err->type),
+                                                _ttncfg.bp_backed_http ) ){
+
+                                   // tag the request so the ACL won't block it
+                                   req->tag = "BLOCKED_BY_WT"; 
+
+                                   entry->unregisterAbort();
+                                   entry->releaseRequest();
+                                   entry->beingReusedByTitan = true;
+                                   entry->unlock("errorAppendEntry");
+
+                                   BodyPipe::Pointer & _bp=req->body_pipe;
+                                   (void)(_bp != NULL && (_bp = NULL).getRaw());
+                                   FwdState::Start(ccmgr.get()->clientConnection, entry, err->request,AccessLogEntryPointer());
+                                   if (err) delete err;
+                                   return;
+
+                        };
+
+                     }break;
+                  };
+
+               } else {
+                  std::string errmsg_=titan_v3::tools::functors::tos{"errorAppendEntry::unable to continue for "}<<urlCanonicalStr(err->request)<<" error detected: "<<GTAPE.tools.err2str(err->type);
+                  debugs(4, DBG_IMPORTANT, errmsg_ );
+                  GTAPE.tools.titax_log_msg(LOG_ERR,errmsg_.c_str());
+                  if (MemObject * const _mem_obj=entry->mem_obj){
+                        HTTPMSGUNLOCK(_mem_obj->request);
+                  };
+                  _flags.resetTcp=true;
+                  entry->unregisterAbort();
+                  entry->beingReusedByTitan = true;
+                  entry->releaseRequest();
+                  entry->unlock("errorAppendEntry");
+                  BodyPipe::Pointer & _bp=err->request->body_pipe;
+                  (void)(_bp != NULL && (_bp = NULL).getRaw());
+
+                  try{
+                     if (err) delete err;
+                  }catch(...){}
+
+                  ccmgr->clientConnection->close();
+
+                  return;
+
+               };
+
+            }break;
+         };
+
+         EBIT_CLR(entry->flags, ENTRY_FWD_HDR_WAIT);
+         entry->flush();
+         entry->complete();
+         entry->negativeCache();
+         entry->releaseRequest();
+         entry->unlock("errorAppendEntry");
+         try{
+            if (err) delete err;
+         }catch(...){}
+         return;
+      };
+   };
+
+   if (!req){
+    debugs(4, DBG_CRITICAL , "CurrentRQ is null; CurrErr:" << err);
+   }
+
+   //TODO: temporary solution until we move handling of the portal page to dynamic backend and redo the auth. UI Page
+   (void)(req && _ttncfg.enable_auth && _ttncfg.allow_ldap && ((req->get_flags().intercepted && _ttncfg.intercept_login) || (!req->get_flags().intercepted && _ttncfg.tmp_intercept_login_pfm))
+       && (err->httpStatus = Http::scForbidden) && (err->page_id = ERR_ESI));
+
+   entry->storeErrorResponse(err->BuildHttpReply(_ttncfg.intercept_login));
+
+
+   try{
+      if (err) delete err;
+   }catch(...){}
+
+}
+
+std::string ErrorState::dump(void){
+   std::stringstream    _ss;
+   _ss<<this;
+   return _ss.str();
+}
+
+std::ostream& operator<<(std::ostream& out, ErrorState * obj){
+   out<<"\n[errorstate]";
+   if (obj){
+      out<<"{\n"           
+        <<"type:"<<obj->type<<"\n"
+        <<"page_id:"<<obj->page_id<<"\n"
+        <<"err_language:"<<(obj->err_language?obj->err_language:"<NULL>")<<"\n"
+        <<"httpStatus:"<<obj->httpStatus<<"\n"
+        <<"xerrno:"<<obj->xerrno<<"\n"
+        <<"port:"<<obj->port<<"\n"
+        <<"dnsError:"<<obj->dnsError<<"\n"
+        <<"request_hdrs_sz:"<<(obj->request_hdrs?strlen(obj->request_hdrs):0)<<"\n"
+        <<"request_hdrs:"<<(obj->request_hdrs?obj->request_hdrs:"<NULL>")<<"\n"
+        <<"err_msg:"<<(obj->err_msg?obj->err_msg:"<NULL>")<<"\n"
+        <<"ErrorDetail:"<<(obj->detail?obj->detail->toString():"<NULL>")<<"\n"
+        <<"detailCode:"<<obj->detailCode<<"\n"
+        <<"blocked_reason"<<obj->blocked_reason<<"\n"
+        <<"redirect_url:"<<(obj->redirect_url?obj->redirect_url:"<NULL>")<<"\n"
+        <<"url_sz:"<<(obj->url?strlen(obj->url):0)<<"\n"
+        <<"url:"<<(obj->url?obj->url:"<NULL>")<<"\n}";
+   };
+   out<<"\n";
+   return (out);
 }
 
 void
-errorSend(const Comm::ConnectionPointer &conn, ErrorState * err)
+errorSend(const Comm::ConnectionPointer &conn, ErrorState * const  err)
 {
-    debugs(4, 3, conn << ", err=" << err);
-    assert(Comm::IsConnOpen(conn));
 
-    HttpReplyPointer rep(err->BuildHttpReply());
 
-    MemBuf *mb = rep->pack();
-    AsyncCall::Pointer call = commCbCall(78, 5, "errorSendComplete",
-                                         CommIoCbPtrFun(&errorSendComplete, err));
-    Comm::Write(conn, mb, call);
-    delete mb;
+   if (err && Comm::IsConnOpen(conn)){
+      debugs(4, 3, HERE << conn << ", err=" << err);
+      if (HttpRequest * const _req=err->request){
+         if (!_req->can_report_errors()) {
+            std::string errmsg_=titan_v3::tools::functors::tos{"errorAppendEntry::unable to continue for "}<<urlCanonicalStr(err->request)<<" error detected: "<<GTAPE.tools.err2str(err->type);
+            debugs(4, DBG_IMPORTANT, errmsg_);
+            GTAPE.tools.titax_log_msg(LOG_ERR,errmsg_.c_str());
+            RequestFlags & _flags=_req->flags;
+            _flags.internal=false;
+            if (err->callback) {
+
+               debugs(4, 3, HERE << err->callback<< ": callback 1");
+               debugs(4, 3, "errorSend: callback");
+               err->callback(conn->fd, err->callback_data, 0);
+            } 
+            else {
+
+               debugs(4, 3, "errorSend: comm_close");
+               conn->close();
+            }
+
+            debugs(4, 3, HERE << ": cleanup");
+            delete err;
+            return ;
+         }
+      }
+
+      debugs(4, 3, HERE << ": alt");
+
+      HttpReply * const rep = err->BuildHttpReply();
+
+      MemBuf * const mb = rep->pack();
+      AsyncCall::Pointer call = commCbCall(78, 5, "errorSendComplete",CommIoCbPtrFun(&errorSendComplete, err));
+      debugs(4, 3, HERE << ": callback 2");
+      Comm::Write(conn, mb, call);
+      delete mb;
+
+      delete rep;
+      return;
+   };
+
+   if (err)
+      debugs(4, 3, HERE << conn << ", err="<<err);
+   else 
+      debugs(4, 3, HERE << conn << ", err=NULL");
+
+   AsyncCall::Pointer call = commCbCall(78, 5, "errorSendComplete",CommIoCbPtrFun(&errorSendComplete, err));
+
 }
 
 /**
@@ -629,32 +873,40 @@ errorSend(const Comm::ConnectionPointer &conn, ErrorState * err)
  *     closing the FD, otherwise we do it ourselves.
  */
 static void
-errorSendComplete(const Comm::ConnectionPointer &conn, char *, size_t size, Comm::Flag errflag, int, void *data)
+errorSendComplete(const Comm::ConnectionPointer &conn, char *bufnotused, size_t size, Comm::Flag errflag, int xerrno, void *data)
 {
-    ErrorState *err = static_cast<ErrorState *>(data);
-    debugs(4, 3, HERE << conn << ", size=" << size);
-
-    if (errflag != Comm::ERR_CLOSING) {
-        if (err->callback) {
-            debugs(4, 3, "errorSendComplete: callback");
-            err->callback(conn->fd, err->callback_data, size);
-        } else {
-            debugs(4, 3, "errorSendComplete: comm_close");
-            conn->close();
-        }
-    }
-
-    delete err;
+   debugs(4, 3, HERE << conn << ", size=" << size);
+   if (ErrorState * const err = static_cast<ErrorState *const>(data)){
+      if (errflag != Comm::ERR_CLOSING) {
+         if (err->callback) {
+             debugs(4, 3, "errorSendComplete: callback");
+             err->callback(conn->fd, err->callback_data, size);
+         } else {
+             debugs(4, 3, "errorSendComplete: comm_close");
+             if (Comm::IsConnOpen(conn))
+               conn->close();
+         }
+      };
+      delete err;
+   } else {
+      debugs(4, 3, "errorSendComplete: comm_close");
+      if (Comm::IsConnOpen(conn))
+        conn->close();
+   }
 }
 
 ErrorState::~ErrorState()
 {
+    HTTPMSGUNLOCK(request);
     safe_free(redirect_url);
     safe_free(url);
     safe_free(request_hdrs);
     wordlistDestroy(&ftp.server_msg);
     safe_free(ftp.request);
     safe_free(ftp.reply);
+#if USE_AUTH
+    auth_user_request = NULL;
+#endif
     safe_free(err_msg);
 #if USE_ERR_LOCALES
     if (err_language != Config.errorDefaultLanguage)
@@ -673,61 +925,72 @@ ErrorState::Dump(MemBuf * mb)
 
     str.reset();
     /* email subject line */
-    str.appendf("CacheErrorInfo - %s", errorPageName(type));
-    mb->appendf("?subject=%s", rfc1738_escape_part(str.buf));
+    str.Printf("CacheErrorInfo - %s", errorPageName(type));
+    mb->Printf("?subject=%s", rfc1738_escape_part(str.buf));
     str.reset();
     /* email body */
-    str.appendf("CacheHost: %s\r\n", getMyHostname());
+    str.Printf("CacheHost: %s\r\n", getMyHostname());
     /* - Err Msgs */
-    str.appendf("ErrPage: %s\r\n", errorPageName(type));
+    str.Printf("ErrPage: %s\r\n", errorPageName(type));
 
     if (xerrno) {
-        str.appendf("Err: (%d) %s\r\n", xerrno, strerror(xerrno));
+        str.Printf("Err: (%d) %s\r\n", xerrno, strerror(xerrno));
     } else {
-        str.append("Err: [none]\r\n", 13);
+        str.Printf("Err: [none]\r\n");
     }
 #if USE_AUTH
     if (auth_user_request.getRaw() && auth_user_request->denyMessage())
-        str.appendf("Auth ErrMsg: %s\r\n", auth_user_request->denyMessage());
+        str.Printf("Auth ErrMsg: %s\r\n", auth_user_request->denyMessage());
 #endif
     if (dnsError.size() > 0)
-        str.appendf("DNS ErrMsg: %s\r\n", dnsError.termedBuf());
+        str.Printf("DNS ErrMsg: %s\r\n", dnsError.termedBuf());
 
     /* - TimeStamp */
-    str.appendf("TimeStamp: %s\r\n\r\n", mkrfc1123(squid_curtime));
+    str.Printf("TimeStamp: %s\r\n\r\n", mkrfc1123(squid_curtime));
 
     /* - IP stuff */
-    str.appendf("ClientIP: %s\r\n", src_addr.toStr(ntoabuf,MAX_IPSTRLEN));
+    str.Printf("ClientIP: %s\r\n", src_addr.toStr(ntoabuf,MAX_IPSTRLEN));
 
     if (request && request->hier.host[0] != '\0') {
-        str.appendf("ServerIP: %s\r\n", request->hier.host);
+        str.Printf("ServerIP: %s\r\n", request->hier.host);
     }
 
-    str.append("\r\n", 2);
+    str.Printf("\r\n");
     /* - HTTP stuff */
-    str.append("HTTP Request:\r\n", 15);
-    if (request) {
-        str.appendf(SQUIDSBUFPH " " SQUIDSBUFPH " %s/%d.%d\n",
-                    SQUIDSBUFPRINT(request->method.image()),
-                    SQUIDSBUFPRINT(request->url.path()),
-                    AnyP::ProtocolType_str[request->http_ver.protocol],
-                    request->http_ver.major, request->http_ver.minor);
-        request->header.packInto(&str);
+    str.Printf("HTTP Request:\r\n");
+
+    if (NULL != request) {
+        Packer pck;
+        String urlpath_or_slash;
+
+        if (request->urlpath.size() != 0)
+            urlpath_or_slash = request->urlpath;
+        else
+            urlpath_or_slash = "/";
+
+        str.Printf(SQUIDSBUFPH " " SQUIDSTRINGPH " %s/%d.%d\n",
+                   SQUIDSBUFPRINT(request->method.image()),
+                   SQUIDSTRINGPRINT(urlpath_or_slash),
+                   AnyP::ProtocolType_str[request->http_ver.protocol],
+                   request->http_ver.major, request->http_ver.minor);
+        packerToMemInit(&pck, &str);
+        request->header.packInto(&pck);
+        packerClean(&pck);
     }
 
-    str.append("\r\n", 2);
+    str.Printf("\r\n");
     /* - FTP stuff */
 
     if (ftp.request) {
-        str.appendf("FTP Request: %s\r\n", ftp.request);
-        str.appendf("FTP Reply: %s\r\n", (ftp.reply? ftp.reply:"[none]"));
-        str.append("FTP Msg: ", 9);
+        str.Printf("FTP Request: %s\r\n", ftp.request);
+        str.Printf("FTP Reply: %s\r\n", (ftp.reply? ftp.reply:"[none]"));
+        str.Printf("FTP Msg: ");
         wordlistCat(ftp.server_msg, &str);
-        str.append("\r\n", 2);
+        str.Printf("\r\n");
     }
 
-    str.append("\r\n", 2);
-    mb->appendf("&body=%s", rfc1738_escape_part(str.buf));
+    str.Printf("\r\n");
+    mb->Printf("&body=%s", rfc1738_escape_part(str.buf));
     str.clean();
     return 0;
 }
@@ -743,39 +1006,27 @@ ErrorState::Convert(char token, bool building_deny_info_url, bool allowRecursion
     int do_quote = 1;
     int no_urlescape = 0;       /* if true then item is NOT to be further URL-encoded */
     char ntoabuf[MAX_IPSTRLEN];
-
+    LOCAL_ARRAY(char, buf, MAX_URL);
     mb.reset();
 
     switch (token) {
 
     case 'a':
 #if USE_AUTH
-        if (request && request->auth_user_request)
+        if (request && request->auth_user_request != NULL)
             p = request->auth_user_request->username();
         if (!p)
 #endif
             p = "-";
         break;
 
-    case 'A':
-        // TODO: When/if we get ALE here, pass it as well
-        if (const auto addr = FindListeningPortAddress(request.getRaw(), nullptr))
-            mb.appendf("%s", addr->toStr(ntoabuf, MAX_IPSTRLEN));
-        else
-            p = "-";
-        break;
-
     case 'b':
-        mb.appendf("%u", getMyPort());
+        mb.Printf("%d", getMyPort());
         break;
 
     case 'B':
         if (building_deny_info_url) break;
-        if (request) {
-            const SBuf &tmp = Ftp::UrlWith2f(request.getRaw());
-            mb.append(tmp.rawContent(), tmp.length());
-        } else
-            p = "[no URL]";
+        p = request ? Ftp::UrlWith2f(request) : "[no URL]";
         break;
 
     case 'c':
@@ -789,7 +1040,7 @@ ErrorState::Convert(char token, bool building_deny_info_url, bool allowRecursion
 #if USE_OPENSSL
         // currently only SSL error details implemented
         else if (detail) {
-            detail->useRequest(request.getRaw());
+            detail->useRequest(request);
             const String &errDetail = detail->toString();
             if (errDetail.size() > 0) {
                 MemBuf *detail_mb  = ConvertText(errDetail.termedBuf(), false);
@@ -800,18 +1051,18 @@ ErrorState::Convert(char token, bool building_deny_info_url, bool allowRecursion
         }
 #endif
         if (!mb.contentSize())
-            mb.append("[No Error Detail]", 17);
+            mb.Printf("[No Error Detail]");
         break;
 
     case 'e':
-        mb.appendf("%d", xerrno);
+        mb.Printf("%d", xerrno);
         break;
 
     case 'E':
         if (xerrno)
-            mb.appendf("(%d) %s", xerrno, strerror(xerrno));
+            mb.Printf("(%d) %s", xerrno, strerror(xerrno));
         else
-            mb.append("[No Error]", 10);
+            mb.Printf("[No Error]");
         break;
 
     case 'f':
@@ -844,7 +1095,7 @@ ErrorState::Convert(char token, bool building_deny_info_url, bool allowRecursion
         break;
 
     case 'h':
-        mb.appendf("%s", getMyHostname());
+        mb.Printf("%s", getMyHostname());
         break;
 
     case 'H':
@@ -852,17 +1103,17 @@ ErrorState::Convert(char token, bool building_deny_info_url, bool allowRecursion
             if (request->hier.host[0] != '\0') // if non-empty string.
                 p = request->hier.host;
             else
-                p = request->url.host();
+                p = request->GetHost();
         } else if (!building_deny_info_url)
             p = "[unknown host]";
         break;
 
     case 'i':
-        mb.appendf("%s", src_addr.toStr(ntoabuf,MAX_IPSTRLEN));
+        mb.Printf("%s", src_addr.toStr(ntoabuf,MAX_IPSTRLEN));
         break;
 
     case 'I':
-        if (request && request->hier.tcpServer)
+        if (request && request->hier.tcpServer != NULL)
             p = request->hier.tcpServer->remote.toStr(ntoabuf,MAX_IPSTRLEN);
         else if (!building_deny_info_url)
             p = "[unknown]";
@@ -874,10 +1125,22 @@ ErrorState::Convert(char token, bool building_deny_info_url, bool allowRecursion
         do_quote = 0;
         break;
 
+    case 'n':
+        if (request) {
+           mb.Printf("%s", HttpPortList->s.toStr(ntoabuf,MAX_IPSTRLEN));
+        }
+        break;
+
+    case 'N':
+        if (building_deny_info_url) break;
+        mb.append(wt_stylesheet.content(), wt_stylesheet.contentSize());
+        do_quote = 0;
+        break;
+
     case 'L':
         if (building_deny_info_url) break;
         if (Config.errHtmlText) {
-            mb.appendf("%s", Config.errHtmlText);
+            mb.Printf("%s", Config.errHtmlText);
             do_quote = 0;
         } else
             p = "[not available]";
@@ -903,9 +1166,6 @@ ErrorState::Convert(char token, bool building_deny_info_url, bool allowRecursion
             p = "[unknown method]";
         break;
 
-    case 'O':
-        if (!building_deny_info_url)
-            do_quote = 0;
     case 'o':
         p = request ? request->extacl_message.termedBuf() : external_acl_message;
         if (!p && !building_deny_info_url)
@@ -914,7 +1174,7 @@ ErrorState::Convert(char token, bool building_deny_info_url, bool allowRecursion
 
     case 'p':
         if (request) {
-            mb.appendf("%u", request->url.port());
+            mb.Printf("%d", (int) request->port);
         } else if (!building_deny_info_url) {
             p = "[unknown port]";
         }
@@ -922,30 +1182,40 @@ ErrorState::Convert(char token, bool building_deny_info_url, bool allowRecursion
 
     case 'P':
         if (request) {
-            const SBuf &m = request->url.getScheme().image();
-            mb.append(m.rawContent(), m.length());
+            p = request->url.getScheme().c_str();
         } else if (!building_deny_info_url) {
             p = "[unknown protocol]";
         }
         break;
 
+    // Titax.
+    case 'r':
+        p = safe_blocked_reason ? safe_blocked_reason : "[no reason]";
+        break;
+
     case 'R':
         if (building_deny_info_url) {
-            if (request != NULL) {
-                const SBuf &tmp = request->url.path();
-                mb.append(tmp.rawContent(), tmp.length());
-                no_urlescape = 1;
-            } else
-                p = "[no request]";
+            p = (request->urlpath.size() != 0 ? request->urlpath.termedBuf() : "/");
+            no_urlescape = 1;
             break;
         }
-        if (request) {
-            mb.appendf(SQUIDSBUFPH " " SQUIDSBUFPH " %s/%d.%d\n",
-                       SQUIDSBUFPRINT(request->method.image()),
-                       SQUIDSBUFPRINT(request->url.path()),
-                       AnyP::ProtocolType_str[request->http_ver.protocol],
-                       request->http_ver.major, request->http_ver.minor);
-            request->header.packInto(&mb, true); //hide authorization data
+        if (NULL != request) {
+            Packer pck;
+            String urlpath_or_slash;
+
+            if (request->urlpath.size() != 0)
+                urlpath_or_slash = request->urlpath;
+            else
+                urlpath_or_slash = "/";
+
+            mb.Printf(SQUIDSBUFPH " " SQUIDSTRINGPH " %s/%d.%d\n",
+                      SQUIDSBUFPRINT(request->method.image()),
+                      SQUIDSTRINGPRINT(urlpath_or_slash),
+                      AnyP::ProtocolType_str[request->http_ver.protocol],
+                      request->http_ver.major, request->http_ver.minor);
+            packerToMemInit(&pck, &mb);
+            request->header.packInto(&pck, true); //hide authorization data
+            packerClean(&pck);
         } else if (request_hdrs) {
             p = request_hdrs;
         } else {
@@ -956,11 +1226,7 @@ ErrorState::Convert(char token, bool building_deny_info_url, bool allowRecursion
     case 's':
         /* for backward compat we make %s show the full URL. Drop this in some future release. */
         if (building_deny_info_url) {
-            if (request) {
-                const SBuf &tmp = request->effectiveRequestUri();
-                mb.append(tmp.rawContent(), tmp.length());
-            } else
-                p = url;
+            p = request ? urlCanonical(request) : url;
             debugs(0, DBG_CRITICAL, "WARNING: deny_info now accepts coded tags. Use %u to get the full URL instead of %s");
         } else
             p = visible_appname_string;
@@ -976,7 +1242,7 @@ ErrorState::Convert(char token, bool building_deny_info_url, bool allowRecursion
             const int saved_id = page_id;
             page_id = ERR_SQUID_SIGNATURE;
             MemBuf *sign_mb = BuildContent();
-            mb.append(sign_mb->content(), sign_mb->contentSize());
+            mb.Printf("%s", sign_mb->content());
             sign_mb->clean();
             delete sign_mb;
             page_id = saved_id;
@@ -988,29 +1254,28 @@ ErrorState::Convert(char token, bool building_deny_info_url, bool allowRecursion
         break;
 
     case 't':
-        mb.appendf("%s", Time::FormatHttpd(squid_curtime));
+        mb.Printf("%s", Time::FormatHttpd(squid_curtime));
         break;
 
     case 'T':
-        mb.appendf("%s", mkrfc1123(squid_curtime));
+        mb.Printf("%s", mkrfc1123(squid_curtime));
         break;
 
     case 'U':
-        /* Using the fake-https version of absolute-URI so error pages see https:// */
+        /* Using the fake-https version of canonical so error pages see https:// */
         /* even when the url-path cannot be shown as more than '*' */
-        if (request)
-            p = urlCanonicalFakeHttps(request.getRaw());
-        else if (url)
+        if (request && urlCanonicalFakeHttps(request,buf,MAX_URL)){
+           p=buf;
+        }else if (url)
             p = url;
         else if (!building_deny_info_url)
             p = "[no URL]";
         break;
 
     case 'u':
-        if (request) {
-            const SBuf &tmp = request->effectiveRequestUri();
-            mb.append(tmp.rawContent(), tmp.length());
-        } else if (url)
+        if (request)
+            p = urlCanonical(request);
+        else if (url)
             p = url;
         else if (!building_deny_info_url)
             p = "[no URL]";
@@ -1018,7 +1283,7 @@ ErrorState::Convert(char token, bool building_deny_info_url, bool allowRecursion
 
     case 'w':
         if (Config.adminEmail)
-            mb.appendf("%s", Config.adminEmail);
+            mb.Printf("%s", Config.adminEmail);
         else if (!building_deny_info_url)
             p = "[unknown]";
         break;
@@ -1033,7 +1298,7 @@ ErrorState::Convert(char token, bool building_deny_info_url, bool allowRecursion
     case 'x':
 #if USE_OPENSSL
         if (detail)
-            mb.appendf("%s", detail->errorName());
+            mb.Printf("%s", detail->errorName());
         else
 #endif
             if (!building_deny_info_url)
@@ -1063,7 +1328,7 @@ ErrorState::Convert(char token, bool building_deny_info_url, bool allowRecursion
         break;
 
     default:
-        mb.appendf("%%%c", token);
+        mb.Printf("%%%c", token);
         do_quote = 0;
         break;
     }
@@ -1085,7 +1350,7 @@ ErrorState::Convert(char token, bool building_deny_info_url, bool allowRecursion
 }
 
 void
-ErrorState::DenyInfoLocation(const char *name, HttpRequest *, MemBuf &result)
+ErrorState::DenyInfoLocation(const char *name, HttpRequest *aRequest, MemBuf &result)
 {
     char const *m = name;
     char const *p = m;
@@ -1097,18 +1362,18 @@ ErrorState::DenyInfoLocation(const char *name, HttpRequest *, MemBuf &result)
     while ((p = strchr(m, '%'))) {
         result.append(m, p - m);       /* copy */
         t = Convert(*++p, true, true);       /* convert */
-        result.appendf("%s", t);        /* copy */
+        result.Printf("%s", t);        /* copy */
         m = p + 1;                     /* advance */
     }
 
     if (*m)
-        result.appendf("%s", m);        /* copy tail */
+        result.Printf("%s", m);        /* copy tail */
 
     assert((size_t)result.contentSize() == strlen(result.content()));
 }
 
 HttpReply *
-ErrorState::BuildHttpReply()
+ErrorState::BuildHttpReply(const bool intercept_login)
 {
     HttpReply *rep = new HttpReply;
     const char *name = errorPageName(page_id);
@@ -1122,7 +1387,7 @@ ErrorState::BuildHttpReply()
             status = httpStatus;
         else {
             // Use 307 for HTTP/1.1 non-GET/HEAD requests.
-            if (request && request->method != Http::METHOD_GET && request->method != Http::METHOD_HEAD && request->http_ver >= Http::ProtocolVersion(1,1))
+            if (request->method != Http::METHOD_GET && request->method != Http::METHOD_HEAD && request->http_ver >= Http::ProtocolVersion(1,1))
                 status = Http::scTemporaryRedirect;
         }
 
@@ -1131,12 +1396,22 @@ ErrorState::BuildHttpReply()
         if (request) {
             MemBuf redirect_location;
             redirect_location.init();
-            DenyInfoLocation(name, request.getRaw(), redirect_location);
-            httpHeaderPutStrf(&rep->header, Http::HdrType::LOCATION, "%s", redirect_location.content() );
+            DenyInfoLocation(name, request, redirect_location);
+            httpHeaderPutStrf(&rep->header, HDR_LOCATION, "%s", redirect_location.content() );
         }
 
-        httpHeaderPutStrf(&rep->header, Http::HdrType::X_SQUID_ERROR, "%d %s", httpStatus, "Access Denied");
+        httpHeaderPutStrf(&rep->header, HDR_X_SQUID_ERROR, "%d %s", httpStatus, "Access Denied");
     } else {
+
+      //* In transparent mode, change code status 407 for 401 to allow autentication. */
+      if (httpStatus == Http::scProxyAuthenticationRequired && request->get_flags().intercepted) {
+         //to use the popups
+         httpStatus = Http::scUnauthorized;
+
+         //TODO:to use the portal page a tmp solution  until we move handling of the portal page to dynamic backend and redo the auth. UI Page
+         (void)(intercept_login && (httpStatus = Http::scForbidden) && (page_id = ERR_ESI));
+
+        }
         MemBuf *content = BuildContent();
         rep->setHeaders(httpStatus, NULL, "text/html;charset=utf-8", content->contentSize(), 0, -1);
         /*
@@ -1147,7 +1422,7 @@ ErrorState::BuildHttpReply()
          * might want to know. Someone _will_ want to know OTOH, the first
          * X-CACHE-MISS entry should tell us who.
          */
-        httpHeaderPutStrf(&rep->header, Http::HdrType::X_SQUID_ERROR, "%s %d", name, xerrno);
+        httpHeaderPutStrf(&rep->header, HDR_X_SQUID_ERROR, "%s %d", name, xerrno);
 
 #if USE_ERR_LOCALES
         /*
@@ -1158,20 +1433,20 @@ ErrorState::BuildHttpReply()
          */
         if (!Config.errorDirectory) {
             /* We 'negotiated' this ONLY from the Accept-Language. */
-            rep->header.delById(Http::HdrType::VARY);
-            rep->header.putStr(Http::HdrType::VARY, "Accept-Language");
+            rep->header.delById(HDR_VARY);
+            rep->header.putStr(HDR_VARY, "Accept-Language");
         }
 
         /* add the Content-Language header according to RFC section 14.12 */
         if (err_language) {
-            rep->header.putStr(Http::HdrType::CONTENT_LANGUAGE, err_language);
+            rep->header.putStr(HDR_CONTENT_LANGUAGE, err_language);
         } else
 #endif /* USE_ERROR_LOCALES */
         {
             /* default templates are in English */
             /* language is known unless error_directory override used */
             if (!Config.errorDirectory)
-                rep->header.putStr(Http::HdrType::CONTENT_LANGUAGE, "en");
+                rep->header.putStr(HDR_CONTENT_LANGUAGE, "en");
         }
 
         rep->body.setMb(content);
@@ -1216,7 +1491,7 @@ ErrorState::BuildContent()
             safe_free(err_language);
 
         localeTmpl = new ErrorPageFile(err_type_str[page_id], static_cast<err_type>(page_id));
-        if (localeTmpl->loadFor(request.getRaw())) {
+        if (localeTmpl->loadFor(request)) {
             m = localeTmpl->text();
             assert(localeTmpl->language());
             err_language = xstrdup(localeTmpl->language());
@@ -1256,12 +1531,12 @@ MemBuf *ErrorState::ConvertText(const char *text, bool allowRecursion)
     while ((p = strchr(m, '%'))) {
         content->append(m, p - m);  /* copy */
         const char *t = Convert(*++p, false, allowRecursion);   /* convert */
-        content->appendf("%s", t);   /* copy */
+        content->Printf("%s", t);   /* copy */
         m = p + 1;          /* advance */
     }
 
     if (*m)
-        content->appendf("%s", m);   /* copy tail */
+        content->Printf("%s", m);   /* copy tail */
 
     content->terminate();
 

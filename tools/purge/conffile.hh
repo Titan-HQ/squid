@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -55,6 +55,11 @@ typedef int bool;
 #endif
 #endif /* __cplusplus */
 
+
+#if !defined(DEFAULT_SQUID_CONF)
+#define DEFAULT_SQUID_CONF "/usr/local/squid/etc/squid.conf"
+#endif
+
 #include <vector>
 
 struct CacheDir {
@@ -70,7 +75,7 @@ typedef std::vector<CacheDir> CacheDirVector;
 
 int
 readConfigFile( CacheDirVector& cachedir, 
-		const char* fn,
+		const char* fn = DEFAULT_SQUID_CONF, 
 		FILE* debug = 0 );
   // purpose: read squid.conf file and extract cache_dir entries
   // paramtr: cachedir (OUT): vector with an entry for each cache_dir found

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -11,27 +11,23 @@
 
 #include "acl/forward.h"
 #include "base/RefCount.h"
-#include "base/YesNoNone.h"
-#if USE_DELAY_POOLS
 #include "ClientDelayConfig.h"
 #include "DelayConfig.h"
-#endif
 #include "helper/ChildConfig.h"
 #include "HttpHeaderTools.h"
+#include "icmp/IcmpConfig.h"
 #include "ip/Address.h"
-#if USE_DELAY_POOLS
-#include "MessageDelayPools.h"
-#endif
 #include "Notes.h"
-#include "security/forward.h"
-#include "SquidTime.h"
 #if USE_OPENSSL
 #include "ssl/support.h"
 #endif
-#include "store/Disk.h"
-#include "store/forward.h"
+#include "YesNoNone.h"
 
 #if USE_OPENSSL
+#if HAVE_OPENSSL_SSL_H
+#include <openssl/ssl.h>
+#endif
+
 class sslproxy_cert_sign;
 class sslproxy_cert_adapt;
 #endif
@@ -40,32 +36,17 @@ namespace Mgr
 {
 class ActionPasswordList;
 } // namespace Mgr
-class CachePeer;
 class CustomLog;
 class CpuAffinityMap;
 class external_acl;
 class HeaderManglers;
 class RefreshPattern;
 class RemovalPolicySettings;
+class SwapDir;
 
 namespace AnyP
 {
 class PortCfg;
-}
-
-namespace Store {
-class DiskConfig {
-public:
-    DiskConfig() { assert(swapDirs == nullptr); }
-    ~DiskConfig() { delete[] swapDirs; }
-
-    RefCount<SwapDir> *swapDirs = nullptr;
-    int n_allocated = 0;
-    int n_configured = 0;
-    /// number of disk processes required to support all cache_dirs
-    int n_strands = 0;
-};
-#define INDEXSD(i) (Config.cacheSwap.swapDirs[i].getRaw())
 }
 
 /// the representation of the configuration. POD.
@@ -81,7 +62,6 @@ public:
     } Swap;
 
     YesNoNone memShared; ///< whether the memory cache is shared among workers
-    YesNoNone shmLocking; ///< shared_memory_locking
     size_t memMaxSize;
 
     struct {
@@ -100,7 +80,6 @@ public:
     time_t positiveDnsTtl;
     time_t shutdownLifetime;
     time_t backgroundPingRate;
-    time_t hopelessKidRevivalDelay; ///< hopeless_kid_revival_delay
 
     struct {
         time_t read;
@@ -113,17 +92,14 @@ public:
         time_t clientIdlePconn;
         time_t serverIdlePconn;
         time_t ftpClientIdle;
-        time_t pconnLifetime; ///< pconn_lifetime in squid.conf
         time_t siteSelect;
         time_t deadPeer;
-        time_t request_start_timeout;
         int icp_query;      /* msec */
         int icp_query_max;  /* msec */
         int icp_query_min;  /* msec */
         int mcast_icp_query;    /* msec */
         time_msec_t idns_retransmit;
         time_msec_t idns_query;
-        time_t urlRewrite;
     } Timeout;
     size_t maxRequestHeaderSize;
     int64_t maxRequestBodySize;
@@ -172,6 +148,10 @@ public:
     } Wccp2;
 #endif
 
+#if USE_ICMP
+    IcmpConfig pinger;
+#endif
+
     char *as_whois_server;
 
     struct {
@@ -208,6 +188,9 @@ public:
 
     Helper::ChildConfig redirectChildren;
     Helper::ChildConfig storeIdChildren;
+    time_t authenticateGCInterval;
+    time_t authenticateTTL;
+    time_t authenticateIpTTL;
 
     struct {
         char *surrogate_id;
@@ -244,6 +227,7 @@ public:
     size_t tcpRcvBufsz;
     size_t udpMaxHitObjsz;
     wordlist *mcast_group_list;
+    wordlist *dns_nameservers;
     CachePeer *peers;
     int npeers;
 
@@ -311,6 +295,7 @@ public:
         int digest_generation;
 #endif
 
+        int ie_refresh;
         int vary_ignore_expire;
         int surrogate_is_remote;
         int request_entities;
@@ -341,12 +326,7 @@ public:
         int hostStrictVerify;
         int client_dst_passthru;
         int dns_mdns;
-#if USE_OPENSSL
-        bool logTlsServerHelloDetails;
-#endif
     } onoff;
-
-    int64_t shared_transient_entries_limit;
 
     int pipeline_max_prefetch;
 
@@ -377,7 +357,7 @@ public:
         acl_access *redirector;
         acl_access *store_id;
         acl_access *reply;
-        Acl::Address *outgoing_address;
+        AclAddress *outgoing_address;
 #if USE_HTCP
 
         acl_access *htcp;
@@ -397,13 +377,8 @@ public:
         /// spoof_client_ip squid.conf acl.
         /// nil unless configured
         acl_access* spoof_client_ip;
-        acl_access *on_unsupported_protocol;
 
         acl_access *ftp_epsv;
-
-        acl_access *forceRequestBodyContinuation;
-        acl_access *serverPconnForNonretriable;
-        acl_access *collapsedForwardingAccess;
     } accessList;
     AclDenyInfoList *denyInfoList;
 
@@ -420,7 +395,17 @@ public:
     } Ftp;
     RefreshPattern *Refresh;
 
-    Store::DiskConfig cacheSwap;
+    struct _cacheSwap {
+        RefCount<SwapDir> *swapDirs;
+        int n_allocated;
+        int n_configured;
+        /// number of disk processes required to support all cache_dirs
+        int n_strands;
+    } cacheSwap;
+    /*
+     * I'm sick of having to keep doing this ..
+     */
+#define INDEXSD(i)   (Config.cacheSwap.swapDirs[(i)].getRaw())
 
     struct {
         char *directory;
@@ -432,6 +417,7 @@ public:
     int errorLogMissingLanguages;
 #endif
     char *errorStylesheet;
+    char *wtStylesheet;
 
     struct {
         int onerror;
@@ -444,7 +430,6 @@ public:
 
     DelayConfig Delay;
     ClientDelayConfig ClientDelay;
-    MessageDelayConfig MessageDelay;
 #endif
 
     struct {
@@ -473,8 +458,6 @@ public:
     HeaderManglers *reply_header_access;
     ///request_header_add access list
     HeaderWithAclList *request_header_add;
-    ///reply_header_add access list
-    HeaderWithAclList *reply_header_add;
     ///note
     Notes notes;
     char *coredump_dir;
@@ -500,6 +483,8 @@ public:
     } SSL;
 #endif
 
+    wordlist *ext_methods;
+
     struct {
         int high_rptm;
         int high_pf;
@@ -510,15 +495,26 @@ public:
     time_t minimum_expiry_time; /* seconds */
     external_acl *externalAclHelperList;
 
-    struct {
-        Security::ContextPointer sslContext;
 #if USE_OPENSSL
+
+    struct {
+        char *cert;
+        char *key;
+        int version;
+        char *options;
+        long parsedOptions;
+        char *cipher;
+        char *cafile;
+        char *capath;
+        char *crlfile;
+        char *flags;
         char *foreignIntermediateCertsPath;
         acl_access *cert_error;
+        SSL_CTX *sslContext;
         sslproxy_cert_sign *cert_sign;
         sslproxy_cert_adapt *cert_adapt;
-#endif
     } ssl_client;
+#endif
 
     char *accept_filter;
     int umask;
@@ -534,18 +530,13 @@ public:
 
     char *redirector_extras;
 
-    struct UrlHelperTimeout {
-        int action;
-        char *response;
-    } onUrlRewriteTimeout;
-
     char *storeId_extras;
 
     struct {
-        SBufList nameservers;
         int v4_first;       ///< Place IPv4 first in the order of DNS results.
         ssize_t packet_max; ///< maximum size EDNS advertised for DNS replies.
     } dns;
+
 };
 
 extern SquidConfig Config;
@@ -553,15 +544,12 @@ extern SquidConfig Config;
 class SquidConfig2
 {
 public:
-    void clear() {
-        *this = SquidConfig2();
-    }
-
     struct {
-        int enable_purge = 0;
+        int enable_purge;
+        int mangle_request_headers;
     } onoff;
-    uid_t effectiveUserID = 0;
-    gid_t effectiveGroupID = 0;
+    uid_t effectiveUserID;
+    gid_t effectiveGroupID;
 };
 
 extern SquidConfig2 Config2;

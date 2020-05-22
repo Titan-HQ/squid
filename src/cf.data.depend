@@ -1,4 +1,4 @@
-## Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+## Copyright (C) 1996-2015 The Squid Software Foundation and contributors
 ##
 ## Squid software is distributed under GPLv2+ license and includes
 ## contributions from numerous individuals and organizations.
@@ -16,7 +16,6 @@ acl_tos			acl
 acl_nfmark		acl
 address
 authparam
-AuthSchemes		acl auth_param
 b_int64_t
 b_size_t
 b_ssize_t
@@ -33,8 +32,6 @@ delay_pool_rates	delay_class
 client_delay_pool_access	acl
 client_delay_pool_count
 client_delay_pool_rates
-response_delay_pool_access	acl
-response_delay_pool_parameters
 denyinfo		acl
 eol
 externalAclHelper	auth_param
@@ -51,10 +48,8 @@ icap_access_type	icap_class acl
 icap_class_type		icap_service
 icap_service_type
 icap_service_failure_limit
-icmp
 ecap_service_type
 int
-int64_t
 kb_int64_t
 kb_size_t
 logformat
@@ -63,7 +58,6 @@ memcachemode
 note			acl
 obsolete
 onoff
-on_unsupported_protocol	acl
 peer
 peer_access		cache_peer acl
 pipelinePrefetch
@@ -72,7 +66,6 @@ QosConfig
 TokenOrQuotedString
 refreshpattern
 removalpolicy
-securePeerOptions
 size_t
 IpAddress_list
 string
@@ -81,14 +74,12 @@ time_msec
 time_t
 tristate
 uri_whitespace
-UrlHelperTimeout	acl
 u_short
 wccp2_method
 wccp2_amethod
 wccp2_service
 wccp2_service_info
 wordlist
-SBufList
 sslproxy_ssl_bump	acl
 sslproxy_ssl_bump_peeked acl
 sslproxy_cert_sign	acl

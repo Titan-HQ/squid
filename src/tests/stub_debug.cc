@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -16,8 +16,7 @@
 #include "squid.h"
 #include "Debug.h"
 
-#define STUB_API "debug.cc"
-#include "tests/STUB.h"
+FILE *debug_log = NULL;
 
 char *Debug::debugOptions;
 char *Debug::cache_log= NULL;
@@ -26,33 +25,24 @@ int Debug::Levels[MAX_DEBUG_SECTIONS];
 int Debug::override_X = 0;
 int Debug::log_stderr = 1;
 bool Debug::log_syslog = false;
-void Debug::ForceAlert() STUB
-
-void StopUsingDebugLog() STUB
-void ResyncDebugLog(FILE *) STUB
-
-FILE *
-DebugStream()
-{
-    return stderr;
-}
 
 Ctx
-ctx_enter(const char *)
+ctx_enter(const char *descr)
 {
     return -1;
 }
 
 void
-ctx_exit(Ctx)
+ctx_exit(Ctx ctx)
+{
+}
+
+void
+_db_init(const char *logfile, const char *options)
 {}
 
 void
-_db_init(const char *, const char *)
-{}
-
-void
-_db_set_syslog(const char *)
+_db_set_syslog(const char *facility)
 {}
 
 void
@@ -96,9 +86,17 @@ _db_print_stderr(const char *format, va_list args)
 
 void
 Debug::parseOptions(char const *)
-{}
+{
+    return;
+}
 
-Debug::Context *Debug::Current = nullptr;
+const char*
+SkipBuildPrefix(const char* path)
+{
+    return path;
+}
+
+Debug::Context *Debug::Current = NULL;
 
 Debug::Context::Context(const int aSection, const int aLevel):
     level(aLevel),
@@ -122,14 +120,8 @@ Debug::Finish()
     if (Current) {
         _db_print("%s\n", Current->buf.str().c_str());
         delete Current;
-        Current = nullptr;
+        Current = NULL;
     }
-}
-
-std::ostream&
-ForceAlert(std::ostream& s)
-{
-    return s;
 }
 
 std::ostream &

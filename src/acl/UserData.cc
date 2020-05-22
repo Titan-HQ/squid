@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -14,15 +14,7 @@
 #include "ConfigParser.h"
 #include "Debug.h"
 #include "globals.h"
-#include "sbuf/Algorithms.h"
-#include "util.h"
-
-const Acl::ParameterFlags &
-ACLUserData::supportedFlags() const
-{
-    static const Acl::ParameterFlags flagNames = { "-i", "+i" };
-    return flagNames;
-}
+#include "SBufAlgos.h"
 
 bool
 ACLUserData::match(char const *user)
@@ -57,16 +49,8 @@ ACLUserData::dump() const
 
     sl.insert(sl.end(), userDataNames.begin(), userDataNames.end());
 
-    debugs(28,5, "ACLUserData dump output: " <<
-           JoinContainerToSBuf(userDataNames.begin(), userDataNames.end(),
-                               SBuf(" ")));
+    debugs(28,5, "ACLUserData dump output: " << SBufContainerJoin(userDataNames,SBuf(" ")));
     return sl;
-}
-
-static bool
-CaseSensitiveSBufCompare(const SBuf &lhs, const SBuf &rhs)
-{
-    return (lhs.cmp(rhs) < 0);
 }
 
 static bool
@@ -75,11 +59,14 @@ CaseInsensitveSBufCompare(const SBuf &lhs, const SBuf &rhs)
     return (lhs.caseCmp(rhs) < 0);
 }
 
-ACLUserData::ACLUserData() :
-    userDataNames(CaseSensitiveSBufCompare)
+static bool
+CaseSensitveSBufCompare(const SBuf &lhs, const SBuf &rhs)
 {
-    flags.case_insensitive = false;
-    flags.required = false;
+    return (lhs < rhs);
+}
+
+ACLUserData::ACLUserData() : userDataNames(CaseSensitveSBufCompare)
+{
 }
 
 void

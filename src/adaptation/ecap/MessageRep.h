@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -15,12 +15,14 @@
 #include "adaptation/Message.h"
 #include "anyp/ProtocolType.h"
 #include "BodyPipe.h"
-#include "http/forward.h"
 #include "HttpHeader.h"
-
 #include <libecap/common/message.h>
 #include <libecap/common/header.h>
 #include <libecap/common/body.h>
+
+class HttpMsg;
+class HttpRequest;
+class HttpReply;
 
 namespace Adaptation
 {
@@ -29,7 +31,7 @@ namespace Ecap
 
 class XactionRep;
 
-// Translates Squid Http::Message into libecap::Header.
+// Translates Squid HttpMsg into libecap::Header.
 class HeaderRep: public libecap::Header
 {
 public:
@@ -37,7 +39,7 @@ public:
     typedef libecap::Area Area;
 
 public:
-    HeaderRep(Http::Message &aMessage);
+    HeaderRep(HttpMsg &aMessage);
 
     /* libecap::Header API */
     virtual bool hasAny(const Name &name) const;
@@ -49,21 +51,21 @@ public:
     virtual void parse(const Area &buf); // throws on failures
 
 protected:
-    static Http::HdrType TranslateHeaderId(const Name &name);
+    static http_hdr_type TranslateHeaderId(const Name &name);
 
 private:
     HttpHeader &theHeader; // the header being translated to libecap
-    Http::Message &theMessage;   // the message being translated to libecap
+    HttpMsg &theMessage;   // the message being translated to libecap
 };
 
-// Helps translate Squid Http::Message into libecap::FirstLine (see children).
+// Helps translate Squid HttpMsg into libecap::FirstLine (see children).
 class FirstLineRep
 {
 public:
     typedef libecap::Name Name;
 
 public:
-    FirstLineRep(Http::Message &aMessage);
+    FirstLineRep(HttpMsg &aMessage);
 
     libecap::Version version() const;
     void version(const libecap::Version &aVersion);
@@ -74,7 +76,7 @@ protected:
     static AnyP::ProtocolType TranslateProtocolId(const Name &name);
 
 private:
-    Http::Message &theMessage; // the message which first line is being translated
+    HttpMsg &theMessage; // the message which first line is being translated
 };
 
 // Translates Squid HttpRequest into libecap::RequestLine.
@@ -147,7 +149,7 @@ private:
 class MessageRep: public libecap::Message
 {
 public:
-    explicit MessageRep(Http::Message *rawHeader);
+    explicit MessageRep(HttpMsg *rawHeader);
     virtual ~MessageRep();
 
     /* libecap::Message API */

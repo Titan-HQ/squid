@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -31,19 +31,13 @@ CBDATA_CLASS_INIT(IdleConnList);
 
 /* ========== IdleConnList ============================================ */
 
-IdleConnList::IdleConnList(const char *aKey, PconnPool *thePool) :
+IdleConnList::IdleConnList(const char *key, PconnPool *thePool) :
     capacity_(PCONN_FDS_SZ),
     size_(0),
     parent_(thePool)
 {
-    //Initialize hash_link members
-    key = xstrdup(aKey);
-    next = NULL;
-
+    hash.key = xstrdup(key);
     theList_ = new Comm::ConnectionPointer[capacity_];
-
-    registerRunner();
-
 // TODO: re-attach to MemPools. WAS: theList = (?? *)pconn_fds_pool->alloc();
 }
 
@@ -59,7 +53,7 @@ IdleConnList::~IdleConnList()
 
     delete[] theList_;
 
-    xfree(key);
+    xfree(hash.key);
 }
 
 /** Search the list. Matches by FD socket number.
@@ -100,7 +94,7 @@ IdleConnList::removeAt(int index)
     if (parent_) {
         parent_->noteConnectionRemoved();
         if (size_ == 0) {
-            debugs(48, 3, "deleting " << hashKeyStr(this));
+            debugs(48, 3, HERE << "deleting " << hashKeyStr(&hash));
             delete this;
         }
     }
@@ -120,8 +114,10 @@ IdleConnList::closeN(size_t n)
         while (size_ > 0) {
             const Comm::ConnectionPointer conn = theList_[--size_];
             theList_[size_] = NULL;
-            clearHandlers(conn);
-            conn->close();
+            if (conn!=NULL){
+               clearHandlers(conn);
+               conn->close();
+            };
             if (parent_)
                 parent_->noteConnectionRemoved();
         }
@@ -151,7 +147,7 @@ IdleConnList::closeN(size_t n)
     }
 
     if (parent_ && size_ == 0) {
-        debugs(48, 3, "deleting " << hashKeyStr(this));
+        debugs(48, 3, HERE << "deleting " << hashKeyStr(&hash));
         delete this;
     }
 }
@@ -160,8 +156,10 @@ void
 IdleConnList::clearHandlers(const Comm::ConnectionPointer &conn)
 {
     debugs(48, 3, HERE << "removing close handler for " << conn);
-    comm_read_cancel(conn->fd, IdleConnList::Read, this);
-    commUnsetConnTimeout(conn);
+    if (Comm::IsConnOpen(conn)){       
+      comm_read_cancel(conn->fd, IdleConnList::Read, this);
+       commUnsetConnTimeout(conn);
+    };
 }
 
 void
@@ -188,7 +186,7 @@ IdleConnList::push(const Comm::ConnectionPointer &conn)
     comm_read(conn, fakeReadBuf_, sizeof(fakeReadBuf_), readCall);
     AsyncCall::Pointer timeoutCall = commCbCall(5,4, "IdleConnList::Timeout",
                                      CommTimeoutCbPtrFun(IdleConnList::Timeout, this));
-    commSetConnTimeout(conn, conn->timeLeft(Config.Timeout.serverIdlePconn), timeoutCall);
+    commSetConnTimeout(conn, Config.Timeout.serverIdlePconn, timeoutCall);
 }
 
 /// Determine whether an entry in the idle list is available for use.
@@ -219,7 +217,7 @@ IdleConnList::pop()
 
         // our connection timeout handler is scheduled to run already. unsafe for now.
         // TODO: cancel the pending timeout callback and allow re-use of the conn.
-        if (fd_table[theList_[i]->fd].timeoutHandler == NULL)
+        if (-1==theList_[i]->fd || fd_table[theList_[i]->fd].timeoutHandler == NULL)
             continue;
 
         // finally, a match. pop and return it.
@@ -242,30 +240,30 @@ IdleConnList::pop()
  * quite a bit of CPU. Just keep it in mind.
  */
 Comm::ConnectionPointer
-IdleConnList::findUseable(const Comm::ConnectionPointer &aKey)
+IdleConnList::findUseable(const Comm::ConnectionPointer &key)
 {
     assert(size_);
 
     // small optimization: do the constant bool tests only once.
-    const bool keyCheckAddr = !aKey->local.isAnyAddr();
-    const bool keyCheckPort = aKey->local.port() > 0;
+    const bool keyCheckAddr = !key->local.isAnyAddr();
+    const bool keyCheckPort = key->local.port() > 0;
 
     for (int i=size_-1; i>=0; --i) {
 
         if (!isAvailable(i))
             continue;
 
-        // local end port is required, but do not match.
-        if (keyCheckPort && aKey->local.port() != theList_[i]->local.port())
+        // local end port is required, but dont match.
+        if (keyCheckPort && key->local.port() != theList_[i]->local.port())
             continue;
 
         // local address is required, but does not match.
-        if (keyCheckAddr && aKey->local.matchIPAddr(theList_[i]->local) != 0)
+        if (keyCheckAddr && key->local.matchIPAddr(theList_[i]->local) != 0)
             continue;
 
         // our connection timeout handler is scheduled to run already. unsafe for now.
         // TODO: cancel the pending timeout callback and allow re-use of the conn.
-        if (fd_table[theList_[i]->fd].timeoutHandler == NULL)
+        if (-1==theList_[i]->fd || fd_table[theList_[i]->fd].timeoutHandler == NULL)
             continue;
 
         // finally, a match. pop and return it.
@@ -295,7 +293,7 @@ IdleConnList::findAndClose(const Comm::ConnectionPointer &conn)
 }
 
 void
-IdleConnList::Read(const Comm::ConnectionPointer &conn, char *, size_t len, Comm::Flag flag, int, void *data)
+IdleConnList::Read(const Comm::ConnectionPointer &conn, char *buf, size_t len, Comm::Flag flag, int xerrno, void *data)
 {
     debugs(48, 3, HERE << len << " bytes from " << conn);
 
@@ -319,27 +317,23 @@ IdleConnList::Timeout(const CommTimeoutCbParams &io)
     list->findAndClose(io.conn);
 }
 
-void
-IdleConnList::endingShutdown()
-{
-    closeN(size_);
-}
-
 /* ========== PconnPool PRIVATE FUNCTIONS ============================================ */
 
-const char *
-PconnPool::key(const Comm::ConnectionPointer &destLink, const char *domain)
+bool
+PconnPool::key(const Comm::ConnectionPointer &destLink, const char * const domain, const char * const _out, const uint32_t _sz)
 {
-    LOCAL_ARRAY(char, buf, SQUIDHOSTNAMELEN * 3 + 10);
+   #define _MAXU (SQUIDHOSTNAMELEN * 3 + 10)
 
-    destLink->remote.toUrl(buf, SQUIDHOSTNAMELEN * 3 + 10);
-    if (domain) {
-        const int used = strlen(buf);
-        snprintf(buf+used, SQUIDHOSTNAMELEN * 3 + 10-used, "/%s", domain);
-    }
-
-    debugs(48,6,"PconnPool::key(" << destLink << ", " << (domain?domain:"[no domain]") << ") is {" << buf << "}" );
-    return buf;
+   if (_out && _sz<=_MAXU && destLink->remote.toUrl((char*const)_out,_sz)){
+      if (domain && *domain){
+         const uint32_t used = strlen(_out);
+         (void)snprintf(((char*const)_out)+used,_sz-used, "/%s", domain);
+      };
+      debugs(48,6,"PconnPool::key(" << destLink << ", " << (domain?domain:"[no domain]") << ") is {" << _out << "}" );
+      return true;
+   };
+   debugs(48,6,"PconnPool::key(" << destLink << ", " << (domain?domain:"[no domain]") << ") is {EMPTY!!!}");
+   return false;
 }
 
 void
@@ -390,9 +384,13 @@ PconnPool::PconnPool(const char *aDescr, const CbcPointer<PeerPoolMgr> &aMgr):
 }
 
 static void
-DeleteIdleConnList(void *hashItem)
+DeleteIdleConnList(void *const hashItem)
 {
-    delete static_cast<IdleConnList*>(hashItem);
+   if (hashItem){
+      if (IdleConnList* const _x=reinterpret_cast<IdleConnList*const>(hashItem)){
+         delete _x;
+     };
+   };  
 }
 
 PconnPool::~PconnPool()
@@ -417,54 +415,65 @@ PconnPool::push(const Comm::ConnectionPointer &conn, const char *domain)
     }
     // TODO: also close used pconns if we exceed peer max-conn limit
 
-    const char *aKey = key(conn, domain);
-    IdleConnList *list = (IdleConnList *) hash_lookup(table, aKey);
+    static char aKey[(SQUIDHOSTNAMELEN * 3 + 10)];
+    (void)zm(aKey,sizeof(aKey));
+    if (key(conn, domain,aKey,sizeof(aKey))){
 
-    if (list == NULL) {
-        list = new IdleConnList(aKey, this);
-        debugs(48, 3, "new IdleConnList for {" << hashKeyStr(list) << "}" );
-        hash_join(table, list);
-    } else {
-        debugs(48, 3, "found IdleConnList for {" << hashKeyStr(list) << "}" );
-    }
+       IdleConnList *list = (IdleConnList *) hash_lookup(table, aKey);
 
-    list->push(conn);
-    assert(!comm_has_incomplete_write(conn->fd));
+       if (list == NULL) {
+           list = new IdleConnList(aKey, this);
+           debugs(48, 3, HERE << "new IdleConnList for {" << hashKeyStr(&list->hash) << "}" );
+           list->hash.next=NULL;
+           hash_join(table, &list->hash);
+       } else {
+           debugs(48, 3, HERE << "found IdleConnList for {" << hashKeyStr(&list->hash) << "}" );
+       }
 
-    LOCAL_ARRAY(char, desc, FD_DESC_SZ);
-    snprintf(desc, FD_DESC_SZ, "Idle server: %s", aKey);
-    fd_note(conn->fd, desc);
-    debugs(48, 3, HERE << "pushed " << conn << " for " << aKey);
+       list->push(conn);
+       assert(!comm_has_incomplete_write(conn->fd));
 
-    // successful push notifications resume multi-connection opening sequence
-    notifyManager("push");
+       LOCAL_ARRAY(char, desc, FD_DESC_SZ);
+       snprintf(desc, FD_DESC_SZ, "Idle server: %s", aKey);
+       fd_note(conn->fd, desc);
+       debugs(48, 3, HERE << "pushed " << conn << " for " << aKey);
+
+       // successful push notifications resume multi-connection opening sequence
+       notifyManager("push");
+       return;
+    };
+    notifyManager("push failure");
 }
 
 Comm::ConnectionPointer
 PconnPool::pop(const Comm::ConnectionPointer &dest, const char *domain, bool keepOpen)
 {
 
-    const char * aKey = key(dest, domain);
+    static char aKey[(SQUIDHOSTNAMELEN * 3 + 10)];
+    (void)zm(aKey,sizeof(aKey));
+    if (key(dest, domain,aKey,sizeof(aKey))){
+       IdleConnList *list = (IdleConnList *)hash_lookup(table, aKey);
+       if (list == NULL) {
+           debugs(48, 3, HERE << "lookup for key {" << aKey << "} failed.");
+           // failure notifications resume standby conn creation after fdUsageHigh
+           notifyManager("pop failure");
+           return Comm::ConnectionPointer();
+       } else {
+           debugs(48, 3, HERE << "found " << hashKeyStr(&list->hash) <<
+                  (keepOpen ? " to use" : " to kill"));
+       };
 
-    IdleConnList *list = (IdleConnList *)hash_lookup(table, aKey);
-    if (list == NULL) {
-        debugs(48, 3, HERE << "lookup for key {" << aKey << "} failed.");
-        // failure notifications resume standby conn creation after fdUsageHigh
-        notifyManager("pop failure");
-        return Comm::ConnectionPointer();
-    } else {
-        debugs(48, 3, "found " << hashKeyStr(list) <<
-               (keepOpen ? " to use" : " to kill"));
-    }
+       /* may delete list */
+       Comm::ConnectionPointer popped = list->findUseable(dest);
+       if (!keepOpen && Comm::IsConnOpen(popped))
+           popped->close();
 
-    /* may delete list */
-    Comm::ConnectionPointer popped = list->findUseable(dest);
-    if (!keepOpen && Comm::IsConnOpen(popped))
-        popped->close();
-
-    // successful pop notifications replenish standby connections pool
-    notifyManager("pop");
-    return popped;
+       // successful pop notifications replenish standby connections pool
+       notifyManager("pop");
+       return popped;
+    };
+    notifyManager("pop failure");
+    return Comm::ConnectionPointer();
 }
 
 void
@@ -491,7 +500,7 @@ PconnPool::closeN(int n)
         }
 
         // may delete current
-        static_cast<IdleConnList*>(current)->closeN(1);
+        reinterpret_cast<IdleConnList*>(current)->closeN(1);
     }
 }
 
@@ -500,7 +509,7 @@ PconnPool::unlinkList(IdleConnList *list)
 {
     theCount -= list->count();
     assert(theCount >= 0);
-    hash_remove_link(table, list);
+    hash_remove_link(table, &list->hash);
 }
 
 void

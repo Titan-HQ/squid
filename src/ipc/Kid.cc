@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -11,7 +11,6 @@
 #include "squid.h"
 #include "globals.h"
 #include "ipc/Kid.h"
-#include "SquidConfig.h"
 
 #include <ctime>
 #if HAVE_SYS_WAIT_H
@@ -20,13 +19,22 @@
 
 int TheProcessKind = pkOther;
 
-Kid::Kid()
+Kid::Kid():
+    badFailures(0),
+    pid(-1),
+    startTime(0),
+    isRunning(false),
+    status(0)
 {
 }
 
-Kid::Kid(const char *aRole, const int anId):
-    processRole(aRole),
-    processId(anId)
+Kid::Kid(const String& kid_name):
+    theName(kid_name),
+    badFailures(0),
+    pid(-1),
+    startTime(0),
+    isRunning(false),
+    status(0)
 {
 }
 
@@ -37,54 +45,26 @@ void Kid::start(pid_t cpid)
     assert(cpid > 0);
 
     isRunning = true;
-    stopTime = 0;
     pid = cpid;
-    startTime = squid_curtime;
+    time(&startTime);
 }
 
 /// called when kid terminates, sets exiting status
-void
-Kid::stop(PidStatus const theExitStatus)
+void Kid::stop(status_type theExitStatus)
 {
     assert(running());
     assert(startTime != 0);
 
     isRunning = false;
-    stopTime = squid_curtime;
-    status = theExitStatus;
 
-    if ((stopTime - startTime) < fastFailureTimeLimit)
+    time_t stop_time;
+    time(&stop_time);
+    if ((stop_time - startTime) < fastFailureTimeLimit)
         ++badFailures;
     else
         badFailures = 0; // the failures are not "frequent" [any more]
 
-    reportStopped(); // after all state changes
-}
-
-/// describes a recently stopped kid
-void
-Kid::reportStopped() const
-{
-    if (calledExit()) {
-        syslog(LOG_NOTICE,
-               "Squid Parent: %s process %d exited with status %d",
-               gist().c_str(), pid, exitStatus());
-    } else if (signaled()) {
-        syslog(LOG_NOTICE,
-               "Squid Parent: %s process %d exited due to signal %d with status %d",
-               gist().c_str(), pid, termSignal(), exitStatus());
-    } else {
-        syslog(LOG_NOTICE, "Squid Parent: %s process %d exited",
-               gist().c_str(), pid);
-    }
-
-    if (hopeless() && Config.hopelessKidRevivalDelay) {
-        syslog(LOG_NOTICE, "Squid Parent: %s process %d will not be restarted for %ld "
-               "seconds due to repeated, frequent failures",
-               gist().c_str(),
-               pid,
-               static_cast<long int>(Config.hopelessKidRevivalDelay));
-    }
+    status = theExitStatus;
 }
 
 /// returns true if tracking of kid is stopped
@@ -161,24 +141,8 @@ bool Kid::signaled(int sgnl) const
 }
 
 /// returns kid name
-SBuf Kid::processName() const
+const String& Kid::name() const
 {
-    SBuf name("(");
-    name.append(gist());
-    name.append(")");
-    return name;
-}
-
-SBuf Kid::gist() const
-{
-    SBuf name(processRole);
-    name.appendf("-%d", processId);
-    return name;
-}
-
-time_t
-Kid::deathDuration() const
-{
-    return squid_curtime > stopTime ? squid_curtime - stopTime : 0;
+    return theName;
 }
 

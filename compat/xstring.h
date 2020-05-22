@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -26,7 +26,12 @@ extern "C" {
  * Define failure_notify to receive error message.
  * otherwise perror() is used to display it.
  */
-char *xstrdup(const char *s);
+char * xstrdup(const char *const s);
+
+/**
+ * same as above except sz is required
+ */
+char *  xstrdupex(const char *const s,const size_t sz);
 
 #ifdef strdup
 #undef strdup
@@ -38,7 +43,7 @@ char *xstrdup(const char *s);
  *  always with '\0' if (n != 0 and dst != NULL),
  *  and doesn't do padding
  */
-char *xstrncpy(char *dst, const char *src, size_t n);
+char * xstrncpy(char * dst, const char * src, size_t n);
 
 /**
  * xstrndup() - Somewhat similar(XXX) to strndup(3): Allocates up to n bytes,
@@ -53,7 +58,7 @@ char *xstrncpy(char *dst, const char *src, size_t n);
  * Define failure_notify to receive error message.
  * otherwise perror() is used to display it.
  */
-char *xstrndup(const char *s, size_t n);
+char * xstrndup(const char *const s, size_t n);
 
 #ifdef strndup
 #undef strndup

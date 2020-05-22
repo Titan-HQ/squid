@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -13,12 +13,12 @@
 #include "acl/Checklist.h"
 #include "acl/HttpHeaderData.h"
 #include "acl/RegexData.h"
-#include "base/RegexPattern.h"
+#include "cache_cf.h"
 #include "ConfigParser.h"
 #include "Debug.h"
+#include "globals.h"
 #include "HttpHeaderTools.h"
-#include "sbuf/SBuf.h"
-#include "sbuf/StringConvert.h"
+#include "SBuf.h"
 
 /* Construct an ACLHTTPHeaderData that uses an ACLRegex rule with the value of the
  * selected header from a given request.
@@ -26,7 +26,7 @@
  * TODO: This can be generalised by making the type of the regex_rule into a
  * template parameter - so that we can use different rules types in future.
  */
-ACLHTTPHeaderData::ACLHTTPHeaderData() : hdrId(Http::HdrType::BAD_HDR), regex_rule(new ACLRegexData)
+ACLHTTPHeaderData::ACLHTTPHeaderData() : hdrId(HDR_BAD_HDR), regex_rule(new ACLRegexData)
 {}
 
 ACLHTTPHeaderData::~ACLHTTPHeaderData()
@@ -43,16 +43,16 @@ ACLHTTPHeaderData::match(HttpHeader* hdr)
     debugs(28, 3, "aclHeaderData::match: checking '" << hdrName << "'");
 
     String value;
-    if (hdrId != Http::HdrType::BAD_HDR) {
+    if (hdrId != HDR_BAD_HDR) {
         if (!hdr->has(hdrId))
             return false;
         value = hdr->getStrOrList(hdrId);
     } else {
-        if (!hdr->hasNamed(hdrName, &value))
+        if (!hdr->getByNameIfPresent(hdrName.termedBuf(), value))
             return false;
     }
 
-    auto cvalue = StringToSBuf(value);
+    SBuf cvalue(value);
     return regex_rule->match(cvalue.c_str());
 }
 
@@ -61,23 +61,29 @@ ACLHTTPHeaderData::dump() const
 {
     SBufList sl;
     sl.push_back(SBuf(hdrName));
+#if __cplusplus >= 201103L
     sl.splice(sl.end(), regex_rule->dump());
+#else
+    // temp is needed until c++11 move-constructor
+    SBufList temp = regex_rule->dump();
+    sl.splice(sl.end(), temp);
+#endif
     return sl;
 }
 
 void
 ACLHTTPHeaderData::parse()
 {
-    char* t = ConfigParser::strtokFile();
+    char* t = strtokFile();
     if (!t) {
         debugs(28, DBG_CRITICAL, "ERROR: " << cfg_filename << " line " << config_lineno << ": " << config_input_line);
         debugs(28, DBG_CRITICAL, "ERROR: Missing header name in ACL");
         return;
     }
 
-    if (hdrName.isEmpty()) {
+    if (hdrName.size() == 0) {
         hdrName = t;
-        hdrId = Http::HeaderLookupTable.lookup(hdrName).id;
+        hdrId = httpHeaderIdByNameDef(hdrName.rawBuf(), hdrName.size());
     } else if (hdrName.caseCmp(t) != 0) {
         debugs(28, DBG_CRITICAL, "ERROR: " << cfg_filename << " line " << config_lineno << ": " << config_input_line);
         debugs(28, DBG_CRITICAL, "ERROR: ACL cannot match both " << hdrName << " and " << t << " headers. Use 'anyof' ACL instead.");
@@ -90,7 +96,7 @@ ACLHTTPHeaderData::parse()
 bool
 ACLHTTPHeaderData::empty() const
 {
-    return (hdrId == Http::HdrType::BAD_HDR && hdrName.isEmpty()) || regex_rule->empty();
+    return (hdrId == HDR_BAD_HDR && hdrName.size()==0) || regex_rule->empty();
 }
 
 ACLData<HttpHeader*> *

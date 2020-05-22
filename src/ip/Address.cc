@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -67,7 +67,7 @@ Ip::Address::cidr() const
             continue ;  /* A short-cut */
         }
 
-        for (caught = 0, bit= 7 ; !caught && (bit <= 7); --bit) {
+        for (caught = 0 , bit= 7 ; !caught && (bit <= 7); --bit) {
             caught = ((ipbyte & 0x80) == 0x00);  /* Found a '0' at 'bit' ? */
 
             if (!caught)
@@ -349,6 +349,13 @@ Ip::Address::getReverseString(char buf[MAX_IPSTRLEN], int show_type) const
     return false;
 }
 
+Ip::Address&
+Ip::Address::operator =(const Ip::Address &s)
+{
+    memcpy(this, &s, sizeof(Ip::Address));
+    return *this;
+};
+
 Ip::Address::Address(const char*s)
 {
     setEmpty();
@@ -433,7 +440,7 @@ Ip::Address::operator =(const struct sockaddr_storage &s)
 {
     /* some AF_* magic to tell socket types apart and what we need to do */
     if (s.ss_family == AF_INET6) {
-        memmove(&mSocketAddr_, &s, sizeof(struct sockaddr_in6));
+        memcpy(&mSocketAddr_, &s, sizeof(struct sockaddr_in6));
     } else { // convert it to our storage mapping.
         struct sockaddr_in *sin = (struct sockaddr_in*)&s;
         mSocketAddr_.sin6_port = sin->sin_port;
@@ -451,7 +458,8 @@ Ip::Address::Address(struct sockaddr_in6 const &s)
 Ip::Address &
 Ip::Address::operator =(struct sockaddr_in6 const &s)
 {
-    memmove(&mSocketAddr_, &s, sizeof(struct sockaddr_in6));
+    memcpy(&mSocketAddr_, &s, sizeof(struct sockaddr_in6));
+
     return *this;
 };
 
@@ -478,11 +486,18 @@ Ip::Address::Address(struct in6_addr const &s)
 Ip::Address &
 Ip::Address::operator =(struct in6_addr const &s)
 {
-    memmove(&mSocketAddr_.sin6_addr, &s, sizeof(struct in6_addr));
+
+    memcpy(&mSocketAddr_.sin6_addr, &s, sizeof(struct in6_addr));
     mSocketAddr_.sin6_family = AF_INET6;
 
     return *this;
 };
+
+Ip::Address::Address(const Ip::Address &s)
+{
+    setEmpty();
+    operator=(s);
+}
 
 Ip::Address::Address(const struct hostent &s)
 {
@@ -897,32 +912,6 @@ Ip::Address::toUrl(char* buf, unsigned int blen) const
     return buf;
 }
 
-bool
-Ip::Address::fromHost(const char *host)
-{
-    setEmpty();
-
-    if (!host)
-        return false;
-
-    if (host[0] != '[')
-        return lookupHostIP(host, true); // no brackets
-
-    /* unwrap a bracketed [presumably IPv6] address, presumably without port */
-
-    const char *start = host + 1;
-    if (!*start)
-        return false; // missing address after an opening bracket
-
-    // XXX: Check that there is a closing bracket and no trailing garbage.
-
-    char *tmp = xstrdup(start); // XXX: Slow. TODO: Bail on huge strings and use an on-stack buffer.
-    tmp[strlen(tmp)-1] = '\0'; // XXX: Wasteful: xstrdup() just did strlen().
-    const bool result = lookupHostIP(tmp, true);
-    xfree(tmp);
-    return result;
-}
-
 void
 Ip::Address::getSockAddr(struct sockaddr_storage &addr, const int family) const
 {
@@ -968,7 +957,7 @@ Ip::Address::getSockAddr(struct sockaddr_in &buf) const
 void
 Ip::Address::getSockAddr(struct sockaddr_in6 &buf) const
 {
-    memmove(&buf, &mSocketAddr_, sizeof(struct sockaddr_in6));
+    memcpy(&buf, &mSocketAddr_, sizeof(struct sockaddr_in6));
     /* maintain address family. It may have changed inside us. */
     buf.sin6_family = AF_INET6;
 
@@ -1016,7 +1005,7 @@ Ip::Address::map6to4(const struct in6_addr &in, struct in_addr &out) const
 void
 Ip::Address::getInAddr(struct in6_addr &buf) const
 {
-    memmove(&buf, &mSocketAddr_.sin6_addr, sizeof(struct in6_addr));
+    memcpy(&buf, &mSocketAddr_.sin6_addr, sizeof(struct in6_addr));
 }
 
 bool
@@ -1026,13 +1015,17 @@ Ip::Address::getInAddr(struct in_addr &buf) const
         map6to4(mSocketAddr_.sin6_addr, buf);
         return true;
     }
-
-    // default:
-    // non-compatible IPv6 Pure Address
-
-    debugs(14, DBG_IMPORTANT, HERE << "Ip::Address::getInAddr : Cannot convert non-IPv4 to IPv4. IPA=" << *this);
-    memset(&buf,0xFFFFFFFF,sizeof(struct in_addr));
-    assert(false);
-    return false;
+    else if (isNoAddr())
+    {
+        return false;
+    }
+    else {
+        // default:
+        // non-compatible IPv6 Pure Address
+        debugs(14, DBG_IMPORTANT, HERE << "Ip::Address::getInAddr : Cannot convert non-IPv4 to IPv4. IPA=" << *this);
+        memset(&buf,0xFFFFFFFF,sizeof(struct in_addr));
+       // assert(false);
+        return false;
+    }
 }
 

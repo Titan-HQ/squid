@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -13,11 +13,12 @@
 #include "SquidTime.h"
 
 Adaptation::Icap::History::History():
+    logType(LOG_TAG_NONE),
     req_sz(0),
+    pastTime(0),
     concurrencyLevel(0)
 {
     memset(&currentStart, 0, sizeof(currentStart));
-    memset(&pastTime, 0, sizeof(pastTime));
 }
 
 void Adaptation::Icap::History::start(const char *context)
@@ -26,7 +27,7 @@ void Adaptation::Icap::History::start(const char *context)
         currentStart = current_time;
 
     debugs(93,4, HERE << "start " << context << " level=" << concurrencyLevel
-           << " time=" << tvToMsec(pastTime) << ' ' << this);
+           << " time=" << pastTime << ' ' << this);
 }
 
 void Adaptation::Icap::History::stop(const char *context)
@@ -36,31 +37,24 @@ void Adaptation::Icap::History::stop(const char *context)
         return;
     }
 
-    struct timeval current;
-    currentTime(current);
+    const int current = currentTime();
     debugs(93,4, HERE << "stop " << context << " level=" << concurrencyLevel <<
-           " time=" << tvToMsec(pastTime) << '+' << tvToMsec(current) << ' ' << this);
+           " time=" << pastTime << '+' << current << ' ' << this);
 
     if (!--concurrencyLevel)
-        tvAssignAdd(pastTime, current);
+        pastTime += current;
 }
 
-void
-Adaptation::Icap::History::processingTime(timeval &total) const
+int Adaptation::Icap::History::processingTime() const
 {
-    currentTime(total);
-    tvAssignAdd(total, pastTime);
-    debugs(93,7, HERE << " current total: " << tvToMsec(total) << ' ' << this);
+    const int total = pastTime + currentTime();
+    debugs(93,7, HERE << " current total: " << total << ' ' << this);
+    return total;
 }
 
-void
-Adaptation::Icap::History::currentTime(timeval &current) const
+int Adaptation::Icap::History::currentTime() const
 {
-    if (concurrencyLevel > 0)
-        tvSub(current, currentStart, current_time);
-    else {
-        current.tv_sec = 0;
-        current.tv_usec = 0;
-    }
+    return concurrencyLevel > 0 ?
+           max(0, tvSubMsec(currentStart, current_time)) : 0;
 }
 

@@ -1,4 +1,4 @@
-## Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+## Copyright (C) 1996-2016 The Squid Software Foundation and contributors
 ##
 ## Squid software is distributed under GPLv2+ license and includes
 ## contributions from numerous individuals and organizations.
@@ -11,10 +11,7 @@ include $(top_srcdir)/src/TestHeaders.am
 noinst_LTLIBRARIES = libservers.la
 
 libservers_la_SOURCES = \
-	forward.h \
 	FtpServer.cc \
 	FtpServer.h \
-	Http1Server.cc \
-	Http1Server.h \
-	Server.cc \
-	Server.h
+	HttpServer.cc \
+	forward.h

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -12,21 +12,20 @@
 #include "acl/Checklist.h"
 #include "acl/Ip.h"
 #include "cache_cf.h"
-#include "ConfigParser.h"
 #include "Debug.h"
 #include "ip/tools.h"
 #include "MemBuf.h"
 #include "wordlist.h"
 
 void *
-ACLIP::operator new (size_t)
+ACLIP::operator new (size_t byteCount)
 {
     fatal ("ACLIP::operator new: unused");
     return (void *)1;
 }
 
 void
-ACLIP::operator delete (void *)
+ACLIP::operator delete (void *address)
 {
     fatal ("ACLIP::operator delete: unused");
 }
@@ -373,9 +372,9 @@ acl_ip_data::FactoryParse(const char *t)
 
         int errcode = getaddrinfo(addr1,NULL,&hints,&hp);
         if (hp == NULL) {
-            delete q;
             if (strcmp(addr1, "::1") == 0) {
                 debugs(28, DBG_IMPORTANT, "aclIpParseIpData: IPv6 has not been enabled in host DNS resolver.");
+                delete q;
             } else {
                 debugs(28, DBG_CRITICAL, "aclIpParseIpData: Bad host/IP: '" << addr1 <<
                        "' in '" << t << "', flags=" << hints.ai_flags <<
@@ -413,13 +412,13 @@ acl_ip_data::FactoryParse(const char *t)
             debugs(28, 3, "" << addr1 << " --> " << r->addr1 );
         }
 
-        freeaddrinfo(hp);
-
         if (*Q != NULL) {
             debugs(28, DBG_CRITICAL, "aclIpParseIpData: Bad host/IP: '" << t << "'");
             self_destruct();
             return NULL;
         }
+
+        freeaddrinfo(hp);
 
         return q;
     }
@@ -477,7 +476,9 @@ ACLIP::parse()
     if (data == NULL)
         data = new IPSplay();
 
-    while (char *t = ConfigParser::strtokFile()) {
+    flags.parseFlags();
+
+    while (char *t = strtokFile()) {
         acl_ip_data *q = acl_ip_data::FactoryParse(t);
 
         while (q != NULL) {
@@ -521,7 +522,7 @@ ACLIP::empty() const
 }
 
 int
-ACLIP::match(const Ip::Address &clientip)
+ACLIP::match(Ip::Address &clientip)
 {
     static acl_ip_data ClientAddress;
     /*

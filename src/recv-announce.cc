@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -49,7 +49,7 @@ sig_handle(int)
     close(2);
     close(1);
     close(0);
-    exit(EXIT_SUCCESS);
+    exit(0);
 }
 
 int
@@ -77,7 +77,7 @@ main(int argc, char *argv[])
 
     if (open(logfile, O_WRONLY | O_CREAT | O_APPEND, 0660) < 0) {
         perror(logfile);
-        exit(EXIT_FAILURE);
+        exit(1);
     }
 
     close(2);
@@ -91,7 +91,7 @@ main(int argc, char *argv[])
 
         if (recvfrom(0, buf, RECV_BUF_SIZE, 0, (sockaddr *)&R, &len) < 0) {
             perror("recv");
-            exit(EXIT_FAILURE);
+            exit(2);
         }
 
         memcpy(ip, &R.sin_addr.s_addr, 4);
@@ -105,6 +105,6 @@ main(int argc, char *argv[])
         fflush(stdout);
     }
 
-    return EXIT_SUCCESS;
+    return 0;
 }
 

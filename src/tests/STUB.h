@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -27,7 +27,7 @@
 #include <iostream>
 
 // Internal Special: the STUB framework requires this function
-#define stub_fatal(m) { std::cerr<<"FATAL: "<<(m)<<" for use of "<<__FUNCTION__<<"\n"; exit(EXIT_FAILURE); }
+#define stub_fatal(m) { std::cerr<<"FATAL: "<<(m)<<" for use of "<<__FUNCTION__<<"\n"; exit(1); }
 
 /// macro to stub a void function.
 #define STUB { stub_fatal(STUB_API " required"); }
@@ -46,12 +46,17 @@
 
 /** macro to stub a function which returns a reference to dynamic
  *  Aborts unit tests requiring its definition with a message about the missing linkage
- *  \param x underlying or "referred to" type
+ *  This macro uses 'new x' to construct a stack vailable for the reference, may leak.
+ *  \param x may be the type to define or a constructor call with parameter values
  */
-#define STUB_RETREF(x) { stub_fatal(STUB_API " required"); return *(x *)nullptr; }
+#define STUB_RETREF(x) { stub_fatal(STUB_API " required"); return new x; }
 
-/** Same as STUB_RETREF(). TODO: Remove */
-#define STUB_RETSTATREF(x) STUB_RETREF(x)
+/** macro to stub a function which returns a reference to static
+ *  Aborts unit tests requiring its definition with a message about the missing linkage
+ *  This macro uses static variable definition to avoid leaks.
+ *  \param x  the type name to define
+ */
+#define STUB_RETSTATREF(x) { stub_fatal(STUB_API " required"); static x v; return v; }
 
 #endif /* STUB */
 

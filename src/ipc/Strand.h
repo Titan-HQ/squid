@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -26,8 +26,6 @@ class StrandCoord;
 /// Receives coordination messages on behalf of its process or thread
 class Strand: public Port
 {
-    CBDATA_CLASS(Strand);
-
 public:
     Strand();
 
@@ -53,6 +51,8 @@ private:
 private:
     Strand(const Strand&); // not implemented
     Strand& operator =(const Strand&); // not implemented
+
+    CBDATA_CLASS2(Strand);
 };
 
 }

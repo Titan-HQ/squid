@@ -1,7 +1,7 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
- * Squid software is distributed under GPLv2+ license and includes
+ * Squid software is distributed under GPLv3+ license and includes
  * contributions from numerous individuals and organizations.
  * Please see the COPYING and CONTRIBUTORS files for details.
  */
@@ -13,104 +13,109 @@
 
 /** request-related flags
  *
- * Contains both flags marking a request's current state,
+ * The bit-field contains both flags marking a request's current state,
  * and flags requesting some processing to be done at a later stage.
  * TODO: better distinguish the two cases.
  */
-class RequestFlags
+#include "TAPE.hxx"
+
+class RequestFlags:public titan_v3::IHRequestFlags
 {
 public:
+    RequestFlags():IHRequestFlags(){
+    }
+
     /** true if the response to this request may not be READ from cache */
-    bool noCache = false;
+    using titan_v3::IHRequestFlags::noCache;
     /** request is if-modified-since */
-    bool ims = false;
+    using titan_v3::IHRequestFlags::ims;
     /** request is authenticated */
-    bool auth = false;
-    /** do not use keytabs for peer Kerberos authentication */
-    bool auth_no_keytab = false;
+    using titan_v3::IHRequestFlags::auth;
     /** he response to the request may be stored in the cache */
-    bool cachable = false;
+    using titan_v3::IHRequestFlags::cachable;
     /** the request can be forwarded through the hierarchy */
-    bool hierarchical = false;
+    using titan_v3::IHRequestFlags::hierarchical;
     /** a loop was detected on this request */
-    bool loopDetected = false;
+    using titan_v3::IHRequestFlags::loopDetected;
     /** the connection can be kept alive */
-    bool proxyKeepalive = false;
+    using titan_v3::IHRequestFlags::proxyKeepalive;
     /* this should be killed, also in httpstateflags */
-    bool proxying = false;
+    using titan_v3::IHRequestFlags::proxying;
     /** content has expired, need to refresh it */
-    bool refresh = false;
+    using titan_v3::IHRequestFlags::refresh;
     /** request was redirected by redirectors */
-    bool redirected = false;
+    using titan_v3::IHRequestFlags::redirected;
     /** the requested object needs to be validated. See client_side_reply.cc
      * for further information.
      */
-    bool needValidation = false;
+    using titan_v3::IHRequestFlags::needValidation;
     /** whether we should fail if validation fails */
-    bool failOnValidationError = false;
+    using titan_v3::IHRequestFlags::failOnValidationError;
     /** reply is stale if it is a hit */
-    bool staleIfHit = false;
+    using titan_v3::IHRequestFlags::staleIfHit;
     /** request to override no-cache directives
      *
      * always use noCacheHack() for reading.
      * \note only meaningful if USE_HTTP_VIOLATIONS is defined at build time
      */
-    bool nocacheHack = false;
+    using titan_v3::IHRequestFlags::nocacheHack;
     /** this request is accelerated (reverse-proxy) */
-    bool accelerated = false;
+    using titan_v3::IHRequestFlags::accelerated;
     /** if set, ignore Cache-Control headers */
-    bool ignoreCc = false;
+    using titan_v3::IHRequestFlags::ignoreCc;
     /** set for intercepted requests */
-    bool intercepted = false;
+    using titan_v3::IHRequestFlags::intercepted;
     /** set if the Host: header passed verification */
-    bool hostVerified = false;
+    using titan_v3::IHRequestFlags::hostVerified;
     /// Set for requests handled by a "tproxy" port.
-    bool interceptTproxy = false;
+    using titan_v3::IHRequestFlags::interceptTproxy;
     /// The client IP address should be spoofed when connecting to the web server.
     /// This applies to TPROXY traffic that has not had spoofing disabled through
     /// the spoof_client_ip squid.conf ACL.
-    bool spoofClientIp = false;
+    using titan_v3::IHRequestFlags::spoofClientIp;
     /** set if the request is internal (\see ClientHttpRequest::flags.internal)*/
-    bool internal = false;
+    using titan_v3::IHRequestFlags::internal;
+    /** set for internally-generated requests */
+    //XXX this is set in in clientBeginRequest, but never tested.
+    using titan_v3::IHRequestFlags::internalClient;
     /** if set, request to try very hard to keep the connection alive */
-    bool mustKeepalive = false;
+    using titan_v3::IHRequestFlags::mustKeepalive;
     /** set if the rquest wants connection oriented auth */
-    bool connectionAuth = false;
+    using titan_v3::IHRequestFlags::connectionAuth;
     /** set if connection oriented auth can not be supported */
-    bool connectionAuthDisabled = false;
-    // XXX This is set in clientCheckPinning but never tested
+    using titan_v3::IHRequestFlags::connectionAuthDisabled;
     /** Request wants connection oriented auth */
-    bool connectionProxyAuth = false;
+    // XXX This is set in clientCheckPinning but never tested
+    using titan_v3::IHRequestFlags::connectionProxyAuth;
     /** set if the request was sent on a pinned connection */
-    bool pinned = false;
+    using titan_v3::IHRequestFlags::pinned;
     /** Authentication was already sent upstream (e.g. due tcp-level auth) */
-    bool authSent = false;
+    using titan_v3::IHRequestFlags::authSent;
     /** Deny direct forwarding unless overriden by always_direct
      * Used in accelerator mode */
-    bool noDirect = false;
+    using titan_v3::IHRequestFlags::noDirect;
     /** Reply with chunked transfer encoding */
-    bool chunkedReply = false;
-    /** set if stream error has occurred */
-    bool streamError = false;
+    using titan_v3::IHRequestFlags::chunkedReply;
+    /** set if stream error has occured */
+    using titan_v3::IHRequestFlags::streamError;
     /** internal ssl-bump request to get server cert */
-    bool sslPeek = false;
+    using titan_v3::IHRequestFlags::sslPeek;
     /** set if X-Forwarded-For checking is complete
      *
      * do not read directly; use doneFollowXff for reading
      */
-    bool done_follow_x_forwarded_for = false;
+    using titan_v3::IHRequestFlags::done_follow_x_forwarded_for;
     /** set for ssl-bumped requests */
-    bool sslBumped = false;
+    using titan_v3::IHRequestFlags::sslBumped;
     /// carries a representation of an FTP command [received on ftp_port]
-    bool ftpNative = false;
-    bool destinationIpLookedUp = false;
+    using titan_v3::IHRequestFlags::ftpNative;
+    using titan_v3::IHRequestFlags::destinationIpLookedUp;
     /** request to reset the TCP stream */
-    bool resetTcp = false;
+    using titan_v3::IHRequestFlags::resetTcp;
     /** set if the request is ranged */
-    bool isRanged = false;
+    using titan_v3::IHRequestFlags::isRanged;
 
-    /// whether to forward via TunnelStateData (instead of FwdState)
-    bool forceTunnel = false;
+
 
     /** clone the flags, resetting to default those which are not safe in
      *  a related (e.g. ICAP-adapted) request.

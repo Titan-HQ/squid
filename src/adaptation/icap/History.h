@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -32,9 +32,8 @@ public:
     /// note the end of an ICAP processing interval
     void stop(const char *context);
 
-    /// the total time of all ICAP processing intervals
-    /// \param[out] total time taken for all ICAP processing
-    void processingTime(struct timeval &total) const;
+    /// returns the total time of all ICAP processing intervals
+    int processingTime() const;
 
     String rfc931; ///< the username from ident
 #if USE_OPENSSL
@@ -46,10 +45,10 @@ public:
     size_t req_sz; ///< the request size
 
 private:
-    void currentTime(struct timeval &) const; ///< time since current start or zero
+    int currentTime() const; ///< time since current start or zero
 
     timeval currentStart; ///< when the current processing interval started
-    struct timeval pastTime; ///< sum of closed processing interval durations
+    int pastTime;         ///< sum of closed processing interval durations
     int concurrencyLevel; ///< number of concurrent processing threads
 };
 

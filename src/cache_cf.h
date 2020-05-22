@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -15,17 +15,16 @@ class wordlist;
 
 void configFreeMemory(void);
 void self_destruct(void);
-void add_http_port(char *portspec);
+void add_http_port(char *const portspec);
 
 /* extra functions from cache_cf.c useful for lib modules */
-void parse_int(int *var);
-void parse_onoff(int *var);
+void parse_int(int *const var);
+void parse_onoff(int *const var);
 void parse_eol(char *volatile *var);
-void parse_wordlist(wordlist ** list);
-void requirePathnameExists(const char *name, const char *path);
-void parse_time_t(time_t * var);
-/// Parse bytes number from a string
-void parseBytesOptionValue(size_t * bptr, const char *units, char const * value);
+void parse_wordlist(wordlist ** const list);
+void requirePathnameExists(const char *const name, const char *const path);
+void parse_time_t(time_t * const var);
+char *strtokFile(void);
 
 #endif /* SQUID_CACHE_CF_H_ */
 

@@ -1,4 +1,4 @@
-## Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+## Copyright (C) 1996-2017 The Squid Software Foundation and contributors
 ##
 ## Squid software is distributed under GPLv2+ license and includes
 ## contributions from numerous individuals and organizations.
@@ -44,34 +44,30 @@
 #serial 4
 
 m4_define([_AX_CXX_COMPILE_STDCXX_11_testbody], [[
-    template <typename T>
+  template <typename T>
     struct check
     {
-      static_assert(sizeof(int) <= sizeof(T), "not big enough"); // GCC 4.3+
+      static_assert(sizeof(int) <= sizeof(T), "not big enough");
     };
 
-#if WHEN_SQUID_HAS_MANDATORY_GCC_4_789_SUPPORT
     struct Base {
     virtual void f() {}
     };
     struct Child : public Base {
-    virtual void f() override {} // GCC 4.7+
+    virtual void f() override {}
     };
-#endif
 
-    typedef check<check<bool>> right_angle_brackets; // GCC 4.3+
+    typedef check<check<bool>> right_angle_brackets;
 
     int a;
-    decltype(a) b; // GCC 4.3+
+    decltype(a) b;
 
     typedef check<int> check_type;
     check_type c;
-    check_type&& cr = static_cast<check_type&&>(c); // GCC 4.3+
+    check_type&& cr = static_cast<check_type&&>(c);
 
-    auto d = a;      // GCC 4.4+
-#if WHEN_SQUID_HAS_MANDATORY_GCC_4_789_SUPPORT
-    auto l = [](){}; // GCC 4.5+ (void lambda seems not to be documented)
-#endif
+    auto d = a;
+    auto l = [](){};
 ]])
 
 AC_DEFUN([AX_CXX_COMPILE_STDCXX_11], [dnl

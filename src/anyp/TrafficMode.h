@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -21,13 +21,17 @@ namespace AnyP
 class TrafficMode
 {
 public:
+    TrafficMode() : accelSurrogate(false), proxySurrogate(false), natIntercept(false), tproxyIntercept(false), tunnelSslBumping(false) {}
+    TrafficMode(const TrafficMode &rhs) { operator =(rhs); }
+    TrafficMode &operator =(const TrafficMode &rhs) { memcpy(this, &rhs, sizeof(TrafficMode)); return *this; }
+
     /** marks HTTP accelerator (reverse/surrogate proxy) traffic
      *
      * Indicating the following are required:
      *  - URL translation from relative to absolute form
      *  - restriction to origin peer relay recommended
      */
-    bool accelSurrogate = false;
+    bool accelSurrogate;
 
     /** marks ports receiving PROXY protocol traffic
      *
@@ -37,7 +41,7 @@ public:
      *  - indirect client IP trust verification is mandatory
      *  - TLS is not supported
      */
-    bool proxySurrogate = false;
+    bool proxySurrogate;
 
     /** marks NAT intercepted traffic
      *
@@ -48,7 +52,7 @@ public:
      *  - destination pinning is recommended
      *  - authentication prohibited
      */
-    bool natIntercept = false;
+    bool natIntercept;
 
     /** marks TPROXY intercepted traffic
      *
@@ -60,7 +64,7 @@ public:
      *  - destination pinning is recommended
      *  - authentication prohibited
      */
-    bool tproxyIntercept = false;
+    bool tproxyIntercept;
 
     /** marks intercept and decryption of CONNECT (tunnel) SSL traffic
      *
@@ -71,7 +75,7 @@ public:
      *  - encrypted outbound server connections
      *  - peer relay prohibited. TODO: re-encrypt and re-wrap with CONNECT
      */
-    bool tunnelSslBumping = false;
+    bool tunnelSslBumping;
 
     /** true if the traffic is in any way intercepted
      *

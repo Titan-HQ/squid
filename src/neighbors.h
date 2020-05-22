@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -11,27 +11,24 @@
 #ifndef SQUID_NEIGHBORS_H_
 #define SQUID_NEIGHBORS_H_
 
-#include "anyp/forward.h"
 #include "enums.h"
 #include "ICP.h"
 #include "lookup_t.h"
-#include "typedefs.h" //for IRCB
 
 class HttpRequest;
 class HttpRequestMethod;
 class CachePeer;
 class StoreEntry;
-class PeerSelector;
 
 CachePeer *getFirstPeer(void);
-CachePeer *getFirstUpParent(PeerSelector *);
+CachePeer *getFirstUpParent(HttpRequest *);
 CachePeer *getNextPeer(CachePeer *);
-CachePeer *getSingleParent(PeerSelector *);
-int neighborsCount(PeerSelector *);
+CachePeer *getSingleParent(HttpRequest *);
+int neighborsCount(HttpRequest *);
 int neighborsUdpPing(HttpRequest *,
                      StoreEntry *,
                      IRCB * callback,
-                     PeerSelector *ps,
+                     void *data,
                      int *exprep,
                      int *timeout);
 void neighborAddAcl(const char *, const char *);
@@ -44,29 +41,23 @@ void neighborsHtcpClear(StoreEntry *, const char *, HttpRequest *, const HttpReq
 #endif
 CachePeer *peerFindByName(const char *);
 CachePeer *peerFindByNameAndPort(const char *, unsigned short);
-CachePeer *getDefaultParent(PeerSelector*);
-CachePeer *getRoundRobinParent(PeerSelector*);
-CachePeer *getWeightedRoundRobinParent(PeerSelector*);
+CachePeer *getDefaultParent(HttpRequest * request);
+CachePeer *getRoundRobinParent(HttpRequest * request);
+CachePeer *getWeightedRoundRobinParent(HttpRequest * request);
 void peerClearRRStart(void);
 void peerClearRR(void);
-lookup_t peerDigestLookup(CachePeer * p, PeerSelector *);
-CachePeer *neighborsDigestSelect(PeerSelector *);
+lookup_t peerDigestLookup(CachePeer * p, HttpRequest * request);
+CachePeer *neighborsDigestSelect(HttpRequest * request);
 void peerNoteDigestLookup(HttpRequest * request, CachePeer * p, lookup_t lookup);
 void peerNoteDigestGone(CachePeer * p);
 int neighborUp(const CachePeer * e);
+CBDUNL peerDestroy;
 const char *neighborTypeStr(const CachePeer * e);
-peer_t neighborType(const CachePeer *, const AnyP::Uri &);
+peer_t neighborType(const CachePeer *, const HttpRequest *);
 void peerConnectFailed(CachePeer *);
 void peerConnectSucceded(CachePeer *);
 void dump_peer_options(StoreEntry *, CachePeer *);
-int peerHTTPOkay(const CachePeer *, PeerSelector *);
-
-// TODO: Consider moving this method to CachePeer class.
-/// \returns the effective connect timeout for the given peer
-time_t peerConnectTimeout(const CachePeer *peer);
-
-/// \returns max(1, timeout)
-time_t positiveTimeout(const time_t timeout);
+int peerHTTPOkay(const CachePeer *, HttpRequest *);
 
 /// Whether we can open new connections to the peer (e.g., despite max-conn)
 bool peerCanOpenMore(const CachePeer *p);

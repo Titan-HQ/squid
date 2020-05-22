@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -10,14 +10,25 @@
 #include "Debug.h"
 #include "fatal.h"
 #include "globals.h"
-#include "store/Disks.h"
+#include "SwapDir.h"
 #include "tools.h"
 
 static void
 fatal_common(const char *message)
 {
-    debugs(1, DBG_CRITICAL, ForceAlert << "FATAL: " << message);
-    debugs(1, DBG_CRITICAL, "Squid Cache (Version " << version_string << "): Terminated abnormally.");
+#if HAVE_SYSLOG
+    syslog(LOG_ALERT, "%s", message);
+#endif
+
+    fprintf(debug_log, "FATAL: %s\n", message);
+
+    if (Debug::log_stderr > 0 && debug_log != stderr)
+        fprintf(stderr, "FATAL: %s\n", message);
+
+    fprintf(debug_log, "Squid Cache (Version %s): Terminated abnormally.\n",
+            version_string);
+
+    fflush(debug_log);
 
     PrintRusage();
 
@@ -31,6 +42,9 @@ fatal(const char *message)
     shutting_down = 1;
 
     releaseServerSockets();
+    /* check for store_dirs_rebuilding because fatal() is often
+     * used in early initialization phases, long before we ever
+     * get to the store log. */
 
     /* XXX: this should be turned into a callback-on-fatal, or
      * a mandatory-shutdown-event or something like that.
@@ -47,11 +61,12 @@ fatal(const char *message)
      */
     leave_suid();
 
-    storeDirWriteCleanLogs(0);
+    if (0 == StoreController::store_dirs_rebuilding)
+        storeDirWriteCleanLogs(0);
 
     fatal_common(message);
 
-    exit(EXIT_FAILURE);
+    exit(1);
 }
 
 /* used by fatalf */

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -36,8 +36,8 @@
  */
 
 #include "md5.h"
-#include "mem/forward.h"
-#include "store/forward.h"
+#include "MemPool.h"
+#include "typedefs.h"
 
 /// maintains a 24-bit checksum over integer fields
 class SwapChecksum24
@@ -84,9 +84,10 @@ operator <<(std::ostream &os, const SwapChecksum24 &sum)
  */
 class StoreSwapLogData
 {
-    MEMPROXY_CLASS(StoreSwapLogData);
 
 public:
+    MEMPROXY_CLASS(StoreSwapLogData);
+
     /// type to use for storing time-related members; must be signed
     typedef int64_t SwappedTime;
 
@@ -175,6 +176,8 @@ public:
      */
     unsigned char key[SQUID_MD5_DIGEST_LENGTH];
 };
+
+MEMPROXY_CLASS_INLINE(StoreSwapLogData);
 
 /// \ingroup FileFormatSwapStateAPI
 /// Swap log starts with this binary structure.

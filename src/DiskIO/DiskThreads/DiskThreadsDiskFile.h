@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -10,18 +10,15 @@
 
 #ifndef SQUID_DISKTHREADSDISKFILE_H
 #define SQUID_DISKTHREADSDISKFILE_H
-
 #include "cbdata.h"
 #include "DiskIO/DiskFile.h"
 #include "DiskThreads.h"
-#include "typedefs.h" //for DWCB
 
 class DiskThreadsDiskFile : public DiskFile
 {
-    CBDATA_CLASS(DiskThreadsDiskFile);
 
 public:
-    DiskThreadsDiskFile(char const *path);
+    DiskThreadsDiskFile(char const *path, DiskThreadsIOStrategy *);
     ~DiskThreadsDiskFile();
     virtual void open(int flags, mode_t mode, RefCount<IORequestor> callback);
     virtual void create(int flags, mode_t mode, RefCount<IORequestor> callback);
@@ -51,10 +48,11 @@ private:
     static DWCB WriteDone;
 #endif
 
-    int fd = -1;
-    bool errorOccured = false;
-    char const *path_ = nullptr;
-    size_t inProgressIOs = 0;
+    int fd;
+    bool errorOccured;
+    char const *path_;
+    DiskThreadsIOStrategy *IO;
+    size_t inProgressIOs;
     static AIOCB OpenDone;
     void openDone(int fd, const char *buf, int aio_return, int aio_errno);
     RefCount<IORequestor> ioRequestor;
@@ -62,6 +60,8 @@ private:
 
     void readDone(int fd, const char *buf, int len, int errflag, RefCount<ReadRequest> request);
     void writeDone(int fd, int errflag, size_t len, RefCount<WriteRequest> request);
+
+    CBDATA_CLASS2(DiskThreadsDiskFile);
 };
 
 #include "DiskIO/ReadRequest.h"
@@ -69,13 +69,15 @@ private:
 template <class RT>
 class IoResult
 {
-    CBDATA_CLASS(IoResult);
 
 public:
     IoResult(RefCount<DiskThreadsDiskFile> aFile, RefCount<RT> aRequest) : file(aFile), request(aRequest) {}
 
     RefCount<DiskThreadsDiskFile> file;
     RefCount<RT> request;
+
+private:
+    CBDATA_CLASS2(IoResult);
 };
 
 template <class RT>

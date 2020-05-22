@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -11,7 +11,49 @@
 #include "HttpReply.h"
 #include "HttpRequest.h"
 #include "SquidConfig.h"
+
+#if USE_OPENSSL
 #include "ssl/support.h"
+
+constexpr int do_AccessLogEntry_tracing = 0;  /*Change to non zero to enable tracing*/
+
+/* Even though AccessLOgEntry is RefCountable it is not showing in the mem:mgr report*/
+static titan_instance_tracker *get_instance_tracker_AccessLogEntry()
+{
+    /* Create on first access, using double checked lock */
+    static titan_instance_tracker *g_AccessLogEntry_tracker = nullptr;
+    static std::mutex l_lock;
+    if (g_AccessLogEntry_tracker == nullptr)
+    {
+	std::lock_guard<std::mutex> l_lg( l_lock );
+	if( g_AccessLogEntry_tracker == nullptr)
+	    g_AccessLogEntry_tracker = new titan_instance_tracker("AccessLogEntry");
+    }
+    return(g_AccessLogEntry_tracker); 
+}
+
+AccessLogEntry::AccessLogEntry() : url(NULL), tcpClient(), reply(NULL), request(NULL),
+            adapted_request(NULL)
+{
+    if (do_AccessLogEntry_tracing != 0) get_instance_tracker_AccessLogEntry()->Add( this );
+}
+void Check_tracker_AccessLogEntry( std::ostream & a_os, uint32_t a_older_than_secs)
+{
+    if (do_AccessLogEntry_tracing != 0)
+    {
+        /* You can pass a function here for printing details of the instance */
+        get_instance_tracker_AccessLogEntry()->Check(a_os, a_older_than_secs, nullptr);
+    }
+    else
+    {
+        a_os << " AccessLogEntry tracing is not enabled\n";
+    }
+}
+
+AccessLogEntry::SslDetails::SslDetails(): user(NULL), bumpMode(::Ssl::bumpEnd)
+{
+}
+#endif /* USE_OPENSSL */
 
 void
 AccessLogEntry::getLogClientIp(char *buf, size_t bufsz) const
@@ -23,17 +65,17 @@ AccessLogEntry::getLogClientIp(char *buf, size_t bufsz) const
         log_ip = request->indirect_client_addr;
     else
 #endif
-        if (tcpClient)
+        if (tcpClient != NULL)
             log_ip = tcpClient->remote;
         else
             log_ip = cache.caddr;
-
+    
     // internally generated requests (and some ICAP) lack client IP
     if (log_ip.isNoAddr()) {
         strncpy(buf, "-", bufsz);
         return;
     }
-
+    
     // Apply so-called 'privacy masking' to IPv4 clients
     // - localhost IP is always shown in full
     // - IPv4 clients masked with client_netmask
@@ -45,57 +87,10 @@ AccessLogEntry::getLogClientIp(char *buf, size_t bufsz) const
     log_ip.toStr(buf, bufsz);
 }
 
-SBuf
-AccessLogEntry::getLogMethod() const
-{
-    SBuf method;
-    if (icp.opcode)
-        method.append(icp_opcode_str[icp.opcode]);
-    else if (htcp.opcode)
-        method.append(htcp.opcode);
-    else
-        method = http.method.image();
-    return method;
-}
-
-void
-AccessLogEntry::syncNotes(HttpRequest *req)
-{
-    // XXX: auth code only has access to HttpRequest being authenticated
-    // so we must handle the case where HttpRequest is set without ALE being set.
-    assert(req);
-    if (!notes)
-        notes = req->notes();
-    else
-        assert(notes == req->notes());
-}
-
-const char *
-AccessLogEntry::getClientIdent() const
-{
-    if (tcpClient)
-        return tcpClient->rfc931;
-
-    if (cache.rfc931 && *cache.rfc931)
-        return cache.rfc931;
-
-    return nullptr;
-}
-
-const char *
-AccessLogEntry::getExtUser() const
-{
-    if (request && request->extacl_user.size())
-        return request->extacl_user.termedBuf();
-
-    if (cache.extuser && *cache.extuser)
-        return cache.extuser;
-
-    return nullptr;
-}
-
 AccessLogEntry::~AccessLogEntry()
 {
+    if (do_AccessLogEntry_tracing != 0) get_instance_tracker_AccessLogEntry()->Remove( this );
+    
     safe_free(headers.request);
 
 #if USE_ADAPTATION
@@ -107,25 +102,11 @@ AccessLogEntry::~AccessLogEntry()
     safe_free(headers.adapted_request);
     HTTPMSGUNLOCK(adapted_request);
 
-    safe_free(lastAclName);
-
     HTTPMSGUNLOCK(reply);
     HTTPMSGUNLOCK(request);
 #if ICAP_CLIENT
     HTTPMSGUNLOCK(icap.reply);
     HTTPMSGUNLOCK(icap.request);
 #endif
-}
-
-const SBuf *
-AccessLogEntry::effectiveVirginUrl() const
-{
-    const SBuf *effectiveUrl = request ? &request->url.absolute() : &virginUrlForMissingRequest_;
-    if (effectiveUrl && !effectiveUrl->isEmpty())
-        return effectiveUrl;
-    // We can not use ALE::url here because it may contain a request URI after
-    // adaptation/redirection. When the request is missing, a non-empty ALE::url
-    // means that we missed a setVirginUrlForMissingRequest() call somewhere.
-    return nullptr;
 }
 

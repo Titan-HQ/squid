@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -27,13 +27,20 @@ Ipc::Forwarder::Forwarder(Request::Pointer aRequest, double aTimeout):
     AsyncJob("Ipc::Forwarder"),
     request(aRequest), timeout(aTimeout)
 {
+    debugs(54, 5, HERE);
 }
 
 Ipc::Forwarder::~Forwarder()
 {
-    SWALLOW_EXCEPTIONS({
-        Must(request->requestId == 0);
-    });
+    debugs(54, 5, HERE);
+    Must(request->requestId == 0);
+    cleanup();
+}
+
+/// perform cleanup actions
+void
+Ipc::Forwarder::cleanup()
+{
 }
 
 void
@@ -72,6 +79,7 @@ Ipc::Forwarder::swanSong()
         DequeueRequest(request->requestId);
         request->requestId = 0;
     }
+    cleanup();
 }
 
 bool
@@ -87,10 +95,8 @@ Ipc::Forwarder::handleRemoteAck()
 {
     debugs(54, 3, HERE);
     request->requestId = 0;
-    // Do not do entry->complete() because it will trigger our client side
-    // processing when we no longer own the client-Squid connection.
-    // Let job cleanup close the client-Squid connection that Coordinator
-    // now owns.
+    // Do not clear ENTRY_FWD_HDR_WAIT or do entry->complete() because
+    // it will trigger our client side processing. Let job cleanup close.
 }
 
 /// Ipc::Forwarder::requestTimedOut wrapper

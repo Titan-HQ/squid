@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -16,8 +16,7 @@
 #include "ipc/mem/Page.h"
 #include "ipc/mem/PageStack.h"
 #include "ipc/StoreMap.h"
-#include "store/Disk.h"
-#include <vector>
+#include "SwapDir.h"
 
 class DiskIOStrategy;
 class ReadRequest;
@@ -38,19 +37,18 @@ public:
 
     /* public ::SwapDir API */
     virtual void reconfigure();
+    virtual StoreSearch *search(String const url, HttpRequest *);
     virtual StoreEntry *get(const cache_key *key);
-    virtual void evictCached(StoreEntry &);
-    virtual void evictIfFound(const cache_key *);
+    virtual void get(String const, STOREGETCLIENT, void * cbdata);
+    virtual void markForUnlink(StoreEntry &e);
     virtual void disconnect(StoreEntry &e);
     virtual uint64_t currentSize() const;
     virtual uint64_t currentCount() const;
     virtual bool doReportStat() const;
-    virtual void finalizeSwapoutSuccess(const StoreEntry &);
-    virtual void finalizeSwapoutFailure(StoreEntry &);
+    virtual void swappedOut(const StoreEntry &e);
     virtual void create();
     virtual void parse(int index, char *path);
     virtual bool smpAware() const { return true; }
-    virtual bool hasReadableEntry(const StoreEntry &) const;
 
     // temporary path to the shared memory map of first slots of cached entries
     SBuf inodeMapPath() const;
@@ -71,7 +69,7 @@ public:
 
     int64_t diskOffset(Ipc::Mem::PageId &pageId) const;
     int64_t diskOffset(int filen) const;
-    void writeError(StoreIOState &sio);
+    void writeError(StoreEntry &e);
 
     /* StoreMapCleaner API */
     virtual void noteFreeMapSlice(const Ipc::StoreMapSliceId fileno);
@@ -80,8 +78,8 @@ public:
 
 protected:
     /* Store API */
-    virtual bool anchorToCache(StoreEntry &entry, bool &inSync);
-    virtual bool updateAnchored(StoreEntry &);
+    virtual bool anchorCollapsed(StoreEntry &collapsed, bool &inSync);
+    virtual bool updateCollapsed(StoreEntry &collapsed);
 
     /* protected ::SwapDir API */
     virtual bool needsDiskStrand() const;
@@ -94,9 +92,9 @@ protected:
     virtual void maintain();
     virtual void diskFull();
     virtual void reference(StoreEntry &e);
-    virtual bool dereference(StoreEntry &e);
-    virtual void updateHeaders(StoreEntry *e);
+    virtual bool dereference(StoreEntry &e, bool);
     virtual bool unlinkdUseful() const;
+    virtual void unlink(StoreEntry &e);
     virtual void statfs(StoreEntry &e) const;
 
     /* IORequestor API */
@@ -122,15 +120,11 @@ protected:
 
     int64_t diskOffsetLimit() const;
 
-    void updateHeadersOrThrow(Ipc::StoreMapUpdate &update);
-    StoreIOState::Pointer createUpdateIO(const Ipc::StoreMapUpdate &update, StoreIOState::STFNCB *, StoreIOState::STIOCB *, void *);
-
     void anchorEntry(StoreEntry &e, const sfileno filen, const Ipc::StoreMapAnchor &anchor);
-    bool updateAnchoredWith(StoreEntry &, const Ipc::StoreMapAnchor &);
+    bool updateCollapsedWith(StoreEntry &collapsed, const Ipc::StoreMapAnchor &anchor);
 
     friend class Rebuild;
     friend class IoState;
-    friend class HeaderUpdater;
     const char *filePath; ///< location of cache storage file inside path/
     DirMap *map; ///< entry key/sfileno to MaxExtras/inode mapping
 

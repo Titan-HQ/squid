@@ -1,6 +1,6 @@
 #!/usr/bin/perl -w
 #
-## Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+## Copyright (C) 1996-2016 The Squid Software Foundation and contributors
 ##
 ## Squid software is distributed under GPLv2+ license and includes
 ## contributions from numerous individuals and organizations.
@@ -55,8 +55,8 @@ my %Pairs = (
 		'HttpStateData (\S+) destroyed',
 	],
 	cbdata => [
-		'cbdataInternalAlloc: Allocating (\S+)',
-		'cbdataRealFree: Freeing (\S+)',
+		'cbdataAlloc: (\S+)',
+		'(?:cbdataFree|cbdataUnlock): Freeing (\S+)',
 	],
 	FD => [
 		'fd_open.*\sFD (\d+)',
@@ -97,12 +97,8 @@ while (<STDIN>) {
 	} 
 	elsif (my @deIds = (/$reDestructor/)) {
 		my $id = join(':', @deIds);
-		if ($AliveCount{$id}) {
-			$AliveImage{$id} = undef() unless --$AliveCount{$id};
-		} else {
-			#warn("unborn: $_");
-			# do nothing; we are probably looking at a partial log
-		}
+		#warn("unborn: $_") unless $AliveCount{$id};
+		$AliveImage{$id} = undef() unless --$AliveCount{$id};
 	}
 }
 

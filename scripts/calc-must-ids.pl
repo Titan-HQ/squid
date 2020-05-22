@@ -1,6 +1,6 @@
 #!/usr/bin/perl
 #
-## Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+## Copyright (C) 1996-2016 The Squid Software Foundation and contributors
 ##
 ## Squid software is distributed under GPLv2+ license and includes
 ## contributions from numerous individuals and organizations.
@@ -30,10 +30,9 @@ while ($file = shift @ARGV)  {
 }
 sub FileNameHash
 {
+# Please keep in sync this function with the FileNameHash function in
+# src/base/TextException.cc file
     my($name) = @_;
-
-    # Keep in sync with FileNameHash() in src/base/Here.cc!
-
     $name =~  s/.*\///g;
     my($i) = 0;
     my($j) =0;
@@ -42,33 +41,26 @@ sub FileNameHash
     for($j=0; $j < @na; $j++) {
         $n = $n ^ (271 * ord($na[$j])); 
     }
-    return $n ^ ($j *271);
+    $i = $n ^ ($j *271);
+    
+    # Currently 18bits of a 32 bit integer used  for filename hash 
+    # (max hash=262143),  and 14 bits for storing line number
+    $i = $i % 262143;
+    return $i;
 }
 
 sub ComputeMustIds
 {
     my($file) = @_;
-
-    # Keep in sync with SourceLocation::id() in src/base/Here.cc!
-
-    my $fullHash = &FileNameHash($file);
-    my $hash = $fullHash % 0x3FFFF;
-
+    my($hash) = FileNameHash($file);
     if(!open(IN, "<$file")) {
         printf STDERR "error opening file $file. Ignore ...";
         return;
     }
     while(<IN>) {
         my($line) = $_;
-
-        next if $line =~ /^\s*#/; # ignore simple single-line C++ macros
-        $line =~ s@//.*@@; # strip simple // comments
-        $line =~ s@/[*].*?[*]/@@; # strip simple single-line /* comments */
-
         my($id);
-        if ($line =~ /\bMust2?\s*\(/ || # Must(...) and Must2(...)
-            $line =~ /\bTexcHere\s*\(/ || # TexcHere(...)
-            $line =~ /\bHere\s*\(\s*\)/) { # Here()
+        if ( $line =~ /^\s*Must\s*\(/  || $line =~ /^\s*throw\s*TexcHere\s*\(/){
             $line =~ s/^\s*//;
             $id= ($hash <<14) | ($. & 0x3FFF);
             $id += ERR_DETAIL_EXCEPTION_START;

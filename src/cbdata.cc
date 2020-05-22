@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -8,22 +8,33 @@
 
 /* DEBUG: section 45    Callback Data Registry */
 
+/**
+ \defgroup CBDATAInternal Callback Data Allocator Internals
+ \ingroup CBDATAAPI
+ *
+ * These routines manage a set of registered callback data pointers.
+ * One of the easiest ways to make Squid coredump is to issue a
+ * callback to for some data structure which has previously been
+ * freed.  With these routines, we register (add) callback data
+ * pointers, lock them just before registering the callback function,
+ * validate them before issuing the callback, and then free them
+ * when finished.
+ */
+
 #include "squid.h"
 #include "cbdata.h"
 #include "Generic.h"
-#include "mem/Pool.h"
 #include "mgr/Registration.h"
 #include "Store.h"
 
 #include <climits>
-
 #if USE_CBDATA_DEBUG
 #include <algorithm>
 #include <vector>
 #endif
 
 #if WITH_VALGRIND
-#include <map>
+#define HASHED_CBDATA 1
 #endif
 
 static int cbdataCount = 0;
@@ -46,51 +57,32 @@ public:
 
 #endif
 
+/// \ingroup CBDATAInternal
 #define OFFSET_OF(TYPE, MEMBER) ((size_t) &(((TYPE) *)0)->(MEMBER))
 
-/**
- * Manage a set of registered callback data pointers.
- * One of the easiest ways to make Squid coredump is to issue a
- * callback to for some data structure which has previously been
- * freed.  With this class, we register (add) callback data
- * pointers, lock them just before registering the callback function,
- * validate them before issuing the callback, and then free them
- * when finished.
- */
+/// \ingroup CBDATAInternal
 class cbdata
 {
-#if !WITH_VALGRIND
-public:
-    void *operator new(size_t, void *where) {return where;}
-    /**
-     * Only ever invoked when placement new throws
-     * an exception. Used to prevent an incorrect free.
-     */
-    void operator delete(void *, void *) {}
-#else
-    MEMPROXY_CLASS(cbdata);
-#endif
-
     /** \todo examine making cbdata templated on this - so we get type
      * safe access to data - RBC 20030902 */
 public:
+#if HASHED_CBDATA
+    hash_link hash; // Must be first
+#endif
+
 #if USE_CBDATA_DEBUG
 
     void dump(StoreEntry *)const;
 #endif
-    cbdata() :
-        valid(0),
-        locks(0),
-        type(CBDATA_UNKNOWN),
-#if USE_CBDATA_DEBUG
-        file(NULL),
-        line(0),
-#endif
-        cookie(0),
-        data(NULL)
-    {}
-    ~cbdata();
 
+#if !HASHED_CBDATA
+    void *operator new(size_t size, void *where);
+    void operator delete(void *where, void *where2);
+#else
+    MEMPROXY_CLASS(cbdata);
+#endif
+
+    ~cbdata();
     int valid;
     int32_t locks;
     cbdata_type type;
@@ -111,21 +103,40 @@ public:
 
     /* cookie used while debugging */
     long cookie;
-    void check(int) const {assert(cookie == ((long)this ^ Cookie));}
+    void check(int aLine) const {assert(cookie == ((long)this ^ Cookie));}
     static const long Cookie;
 
-#if !WITH_VALGRIND
+#if !HASHED_CBDATA
     size_t dataSize() const { return sizeof(data);}
     static long MakeOffset();
     static const long Offset;
-#endif
     /* MUST be the last per-instance member */
     void *data;
+#endif
+
 };
 
 const long cbdata::Cookie((long)0xDEADBEEF);
-#if !WITH_VALGRIND
+#if !HASHED_CBDATA
 const long cbdata::Offset(MakeOffset());
+
+void *
+cbdata::operator new(size_t size, void *where)
+{
+    // assert (size == sizeof(cbdata));
+    return where;
+}
+
+/**
+ * Only ever invoked when placement new throws
+ * an exception. Used to prevent an incorrect
+ * free.
+ */
+void
+cbdata::operator delete(void *where, void *where2)
+{
+    ; // empty.
+}
 
 long
 cbdata::MakeOffset()
@@ -134,6 +145,8 @@ cbdata::MakeOffset()
     void **dataOffset = &zero->data;
     return (long)dataOffset;
 }
+#else
+MEMPROXY_CLASS_INLINE(cbdata);
 #endif
 
 static OBJH cbdataDump;
@@ -141,38 +154,61 @@ static OBJH cbdataDump;
 static OBJH cbdataDumpHistory;
 #endif
 
+/// \ingroup CBDATAInternal
 struct CBDataIndex {
     MemAllocator *pool;
+    FREE *free_func;
 }
 *cbdata_index = NULL;
 
+/// \ingroup CBDATAInternal
 int cbdata_types = 0;
 
-#if WITH_VALGRIND
-static std::map<const void *, cbdata *> cbdata_htable;
+#if HASHED_CBDATA
+static hash_table *cbdata_htable = NULL;
+
+static int
+cbdata_cmp(const void *p1, const void *p2)
+{
+    return (char *) p1 - (char *) p2;
+}
+
+static unsigned int
+cbdata_hash(const void *p, unsigned int mod)
+{
+    return ((unsigned long) p >> 8) % mod;
+}
 #endif
 
 cbdata::~cbdata()
 {
 #if USE_CBDATA_DEBUG
 
+    CBDataCall* _last=NULL;
     while (!calls.empty()) {
-        delete calls.back();
-        calls.pop_back();
+       _last=calls.back();
+       calls.pop_back();
+       try{
+          if (_last)  delete _last;
+       }catch (...){}
     }
 
 #endif
 
-#if WITH_VALGRIND
-    void *p = data;
+    FREE *free_func = cbdata_index[type].free_func;
+
+#if HASHED_CBDATA
+    void *p = hash.key;
 #else
-    void *p = this;
+    void *p = &data;
 #endif
-    cbdata_index[type].pool->freeOne(p);
+
+    if (free_func)
+        free_func(p);
 }
 
 static void
-cbdataInternalInitType(cbdata_type type, const char *name, int size)
+cbdataInternalInitType(cbdata_type type, const char *name, int size, FREE * free_func)
 {
     char *label;
     assert (type == cbdata_types + 1);
@@ -185,23 +221,30 @@ cbdataInternalInitType(cbdata_type type, const char *name, int size)
 
     snprintf(label, strlen(name) + 20, "cbdata %s (%d)", name, (int) type);
 
-#if !WITH_VALGRIND
+#if !HASHED_CBDATA
     assert((size_t)cbdata::Offset == (sizeof(cbdata) - ((cbdata *)NULL)->dataSize()));
     size += cbdata::Offset;
 #endif
 
     cbdata_index[type].pool = memPoolCreate(label, size);
+
+    cbdata_index[type].free_func = free_func;
+
+#if HASHED_CBDATA
+    if (!cbdata_htable)
+        cbdata_htable = hash_create(cbdata_cmp, 1 << 12, cbdata_hash);
+#endif
 }
 
 cbdata_type
-cbdataInternalAddType(cbdata_type type, const char *name, int size)
+cbdataInternalAddType(cbdata_type type, const char *name, int size, FREE * free_func)
 {
     if (type)
         return type;
 
     type = (cbdata_type)(cbdata_types + 1);
 
-    cbdataInternalInitType(type, name, size);
+    cbdataInternalInitType(type, name, size, free_func);
 
     return type;
 }
@@ -221,7 +264,11 @@ cbdataRegisterWithCacheManager(void)
 }
 
 void *
-cbdataInternalAlloc(cbdata_type type, const char *file, int line)
+#if USE_CBDATA_DEBUG
+cbdataInternalAllocDbg(cbdata_type type, const char *file, int line)
+#else
+cbdataInternalAlloc(cbdata_type type)
+#endif
 {
     cbdata *c;
     void *p;
@@ -229,11 +276,12 @@ cbdataInternalAlloc(cbdata_type type, const char *file, int line)
     /* placement new: the pool alloc gives us cbdata + user type memory space
      * and we init it with cbdata at the start of it
      */
-#if WITH_VALGRIND
+#if HASHED_CBDATA
     c = new cbdata;
     p = cbdata_index[type].pool->alloc();
-    c->data = p;
-    cbdata_htable.emplace(p,c);
+    c->hash.key = p;
+    c->hash.next=NULL;
+    hash_join(cbdata_htable, &c->hash);
 #else
     c = new (cbdata_index[type].pool->alloc()) cbdata;
     p = (void *)&c->data;
@@ -259,47 +307,16 @@ cbdataInternalAlloc(cbdata_type type, const char *file, int line)
     return p;
 }
 
-void
-cbdataRealFree(cbdata *c, const char *file, const int line)
-{
-#if WITH_VALGRIND
-    void *p = c->data;
-#else
-    void *p = (void *)&c->data;
-#endif
-
-    --cbdataCount;
-#if USE_CBDATA_DEBUG
-    debugs(45, 3, "Freeing " << p << ' ' << file << ':' << line);
-    dlinkDelete(&c->link, &cbdataEntries);
-#else
-    debugs(45, 9, "Freeing " << p);
-#endif
-
-#if WITH_VALGRIND
-    cbdata_htable.erase(p);
-    delete c;
-#else
-    /* This is ugly. But: operator delete doesn't get
-     * the type parameter, so we can't use that
-     * to free the memory.
-     * So, we free it ourselves.
-     * Note that this means a non-placement
-     * new would be a seriously bad idea.
-     * Lastly, if we where a templated class,
-     * we could use the normal delete operator
-     * and it would Just Work. RBC 20030902
-     */
-    c->cbdata::~cbdata();
-#endif
-}
-
 void *
-cbdataInternalFree(void *p, const char *file, int line)
+#if USE_CBDATA_DEBUG
+cbdataInternalFreeDbg(void *p, const char *file, int line)
+#else
+cbdataInternalFree(void *p)
+#endif
 {
     cbdata *c;
-#if WITH_VALGRIND
-    c = cbdata_htable.at(p);
+#if HASHED_CBDATA
+    c = (cbdata *) hash_lookup(cbdata_htable, p);
 #else
     c = (cbdata *) (((char *) p) - cbdata::Offset);
 #endif
@@ -322,7 +339,38 @@ cbdataInternalFree(void *p, const char *file, int line)
         return NULL;
     }
 
-    cbdataRealFree(c, file, line);
+    --cbdataCount;
+    debugs(45, 9, "Freeing " << p);
+#if USE_CBDATA_DEBUG
+
+    dlinkDelete(&c->link, &cbdataEntries);
+#endif
+
+    /* This is ugly. But: operator delete doesn't get
+     * the type parameter, so we can't use that
+     * to free the memory.
+     * So, we free it ourselves.
+     * Note that this means a non-placement
+     * new would be a seriously bad idea.
+     * Lastly, if we where a templated class,
+     * we could use the normal delete operator
+     * and it would Just Work. RBC 20030902
+     */
+    cbdata_type theType = c->type;
+#if HASHED_CBDATA
+    hash_remove_link(cbdata_htable, &c->hash);
+#if USE_CBDATA_DEBUG
+    debugs(45, 3, "Call delete " << (void*)c << " " << file << ":" << line);
+#endif
+    delete c;
+    cbdata_index[theType].pool->freeOne((void *)p);
+#else
+#if USE_CBDATA_DEBUG
+    debugs(45, 3, "Call cbdata::~cbdata() " << (void*)c << " " << file << ":" << line);
+#endif
+    c->cbdata::~cbdata();
+    cbdata_index[theType].pool->freeOne(c);
+#endif
     return NULL;
 }
 
@@ -338,8 +386,8 @@ cbdataInternalLock(const void *p)
     if (p == NULL)
         return;
 
-#if WITH_VALGRIND
-    c = cbdata_htable.at(p);
+#if HASHED_CBDATA
+    c = (cbdata *) hash_lookup(cbdata_htable, p);
 #else
     c = (cbdata *) (((char *) p) - cbdata::Offset);
 #endif
@@ -370,8 +418,8 @@ cbdataInternalUnlock(const void *p)
     if (p == NULL)
         return;
 
-#if WITH_VALGRIND
-    c = cbdata_htable.at(p);
+#if HASHED_CBDATA
+    c = (cbdata *) hash_lookup(cbdata_htable, p);
 #else
     c = (cbdata *) (((char *) p) - cbdata::Offset);
 #endif
@@ -401,10 +449,40 @@ cbdataInternalUnlock(const void *p)
         return;
     }
 
+    --cbdataCount;
+
+    debugs(45, 9, "Freeing " << p);
+
 #if USE_CBDATA_DEBUG
-    cbdataRealFree(c, file, line);
+
+    dlinkDelete(&c->link, &cbdataEntries);
+
+#endif
+
+    /* This is ugly. But: operator delete doesn't get
+     * the type parameter, so we can't use that
+     * to free the memory.
+     * So, we free it ourselves.
+     * Note that this means a non-placement
+     * new would be a seriously bad idea.
+     * Lastly, if we where a templated class,
+     * we could use the normal delete operator
+     * and it would Just Work. RBC 20030902
+     */
+    cbdata_type theType = c->type;
+#if HASHED_CBDATA
+    hash_remove_link(cbdata_htable, &c->hash);
+#if USE_CBDATA_DEBUG
+    debugs(45, 3, "Call delete " << (void*)c << " " << file << ":" << line);
+#endif
+    delete c;
+    cbdata_index[theType].pool->freeOne((void *)p);
 #else
-    cbdataRealFree(c, NULL, 0);
+#if USE_CBDATA_DEBUG
+    debugs(45, 3, "Call cbdata::~cbdata() " << (void*)c << " " << file << ":" << line);
+#endif
+    c->cbdata::~cbdata();
+    cbdata_index[theType].pool->freeOne(c);
 #endif
 }
 
@@ -418,17 +496,20 @@ cbdataReferenceValid(const void *p)
 
     debugs(45, 9, p);
 
-#if WITH_VALGRIND
-    c = cbdata_htable.at(p);
+#if HASHED_CBDATA
+    c = (cbdata *) hash_lookup(cbdata_htable, p);
 #else
     c = (cbdata *) (((char *) p) - cbdata::Offset);
 #endif
 
     c->check(__LINE__);
 
-    assert(c->locks > 0);
 
-    return c->valid;
+    if (c->locks>0){
+      //assert(c->locks > 0);
+      return c->valid;
+    };
+    return 0;
 }
 
 int
@@ -462,8 +543,8 @@ cbdataInternalReferenceDoneValid(void **pp, void **tp)
 void
 cbdata::dump(StoreEntry *sentry) const
 {
-#if WITH_VALGRIND
-    void *p = data;
+#if HASHED_CBDATA
+    void *p = (void *)hash.key;
 #else
     void *p = (void *)&data;
 #endif
@@ -499,12 +580,12 @@ cbdataDump(StoreEntry * sentry)
         MemAllocator *pool = cbdata_index[i].pool;
 
         if (pool) {
-#if WITH_VALGRIND
+#if HASHED_CBDATA
             int obj_size = pool->objectSize();
 #else
             int obj_size = pool->objectSize() - cbdata::Offset;
 #endif
-            storeAppendPrintf(sentry, "%s\t%d\t%ld\t%ld\n", pool->objectType() + 7, obj_size, (long int)pool->getMeter().inuse.currentLevel(), (long int)obj_size * pool->getMeter().inuse.currentLevel());
+            storeAppendPrintf(sentry, "%s\t%d\t%ld\t%ld\n", pool->objectType() + 7, obj_size, (long int)pool->getMeter().inuse.level, (long int)obj_size * pool->getMeter().inuse.level);
         }
     }
 
@@ -514,17 +595,6 @@ cbdataDump(StoreEntry * sentry)
 #endif
 
     storeAppendPrintf(sentry, "\nsee also \"Memory utilization\" for detailed per type statistics\n");
-}
-
-CallbackData &
-CallbackData::operator =(const CallbackData &other)
-{
-    if (data_ != other.data_) { // assignment to self and no-op assignments
-        auto old = data_;
-        data_ = cbdataReference(other.data_);
-        cbdataReferenceDone(old);
-    }
-    return *this;
 }
 
 CBDATA_CLASS_INIT(generic_cbdata);

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -13,18 +13,18 @@
  * See acl.c for access control and client_side.c for auditing */
 
 #include "squid.h"
-#include "acl/FilledChecklist.h"
 #include "auth/Config.h"
+#include "auth/Scheme.h"
+#include "auth/User.h"
+#include "auth/UserRequest.h"
 #include "client_side.h"
 #include "comm/Connection.h"
-#include "fatal.h"
 #include "format/Format.h"
-#include "helper.h"
-#include "helper/Reply.h"
-#include "http/Stream.h"
 #include "HttpReply.h"
 #include "HttpRequest.h"
 #include "MemBuf.h"
+
+#define PROXY_BUFFER_SIZE 100
 
 /* Generic Functions */
 
@@ -77,14 +77,14 @@ Auth::UserRequest::valid() const
 }
 
 void *
-Auth::UserRequest::operator new (size_t)
+Auth::UserRequest::operator new (size_t byteCount)
 {
     fatal("Auth::UserRequest not directly allocatable\n");
     return (void *)1;
 }
 
 void
-Auth::UserRequest::operator delete (void *)
+Auth::UserRequest::operator delete (void *address)
 {
     fatal("Auth::UserRequest child failed to override operator delete\n");
 }
@@ -118,13 +118,13 @@ Auth::UserRequest::setDenyMessage(char const *aString)
 }
 
 char const *
-Auth::UserRequest::getDenyMessage() const
+Auth::UserRequest::getDenyMessage()
 {
     return message;
 }
 
 char const *
-Auth::UserRequest::denyMessage(char const * const default_message) const
+Auth::UserRequest::denyMessage(char const * const default_message)
 {
     if (getDenyMessage() == NULL)
         return default_message;
@@ -194,11 +194,11 @@ Auth::UserRequest::direction()
 }
 
 void
-Auth::UserRequest::addAuthenticationInfoHeader(HttpReply *, int)
+Auth::UserRequest::addAuthenticationInfoHeader(HttpReply * rep, int accelerated)
 {}
 
 void
-Auth::UserRequest::addAuthenticationInfoTrailer(HttpReply *, int)
+Auth::UserRequest::addAuthenticationInfoTrailer(HttpReply * rep, int accelerated)
 {}
 
 void
@@ -219,7 +219,7 @@ Auth::UserRequest::connLastHeader()
  * This is basically a handle approach.
  */
 static void
-authenticateAuthenticateUser(Auth::UserRequest::Pointer auth_user_request, HttpRequest * request, ConnStateData * conn, Http::HdrType type)
+authenticateAuthenticateUser(Auth::UserRequest::Pointer auth_user_request, HttpRequest * request, ConnStateData * conn, http_hdr_type type)
 {
     assert(auth_user_request.getRaw() != NULL);
 
@@ -250,6 +250,21 @@ authTryGetUser(Auth::UserRequest::Pointer auth_user_request, ConnStateData * con
     return res;
 }
 
+bool Auth::UserRequest::isKshieldAuth() {
+   bool isKshield = false;
+
+   for (Auth::ConfigVector::iterator  i = Auth::TheConfig.begin(); i != Auth::TheConfig.end(); ++i) {
+      Auth::Config *scheme = *i;
+
+      if (scheme->active()) {
+         if (!strcmp(scheme->type(), "kshield")) {
+            isKshield = true;
+         }
+      }
+   }
+   return isKshield;
+}
+
 /* returns one of
  * AUTH_ACL_CHALLENGE,
  * AUTH_ACL_HELPER,
@@ -272,12 +287,18 @@ authTryGetUser(Auth::UserRequest::Pointer auth_user_request, ConnStateData * con
  * Caller is responsible for locking and unlocking their *auth_user_request!
  */
 AuthAclState
-Auth::UserRequest::authenticate(Auth::UserRequest::Pointer * auth_user_request, Http::HdrType headertype, HttpRequest * request, ConnStateData * conn, Ip::Address &src_addr, AccessLogEntry::Pointer &al)
+Auth::UserRequest::authenticate(Auth::UserRequest::Pointer * auth_user_request, http_hdr_type headertype, HttpRequest * request, ConnStateData * conn, Ip::Address &src_addr, AccessLogEntry::Pointer &al)
 {
-    const char *proxy_auth;
     assert(headertype != 0);
-
-    proxy_auth = request->header.getStr(headertype);
+    const char *proxy_auth=NULL;
+    char buf[PROXY_BUFFER_SIZE];
+    if (!isKshieldAuth()) {
+       proxy_auth = request->header.getStr(headertype);
+    } else {
+       char ip_buf[PROXY_BUFFER_SIZE];
+       snprintf(buf, sizeof(buf), "kshield %s\n", request->client_addr.toStr(ip_buf, PROXY_BUFFER_SIZE));
+       proxy_auth = buf;
+    };
 
     /*
      * a note on proxy_auth logix here:
@@ -295,7 +316,7 @@ Auth::UserRequest::authenticate(Auth::UserRequest::Pointer * auth_user_request, 
 
         /* connection auth we must reset on auth errors */
         if (conn != NULL) {
-            conn->setAuth(NULL, "HTTP request missing credentials");
+           conn->setAuth(NULL, "HTTP request missing credentials");
         }
 
         *auth_user_request = NULL;
@@ -335,7 +356,7 @@ Auth::UserRequest::authenticate(Auth::UserRequest::Pointer * auth_user_request, 
         }
 
         if (proxy_auth && request->auth_user_request == NULL && conn != NULL && conn->getAuth() != NULL) {
-            Auth::SchemeConfig * scheme = Auth::SchemeConfig::Find(proxy_auth);
+            Auth::Config * scheme = Auth::Config::Find(proxy_auth);
 
             if (conn->getAuth()->user() == NULL || conn->getAuth()->user()->config != scheme) {
                 debugs(29, DBG_IMPORTANT, "WARNING: Unexpected change of authentication scheme from '" <<
@@ -351,7 +372,7 @@ Auth::UserRequest::authenticate(Auth::UserRequest::Pointer * auth_user_request, 
             /* beginning of a new request check */
             debugs(29, 4, HERE << "No connection authentication type");
 
-            *auth_user_request = Auth::SchemeConfig::CreateAuthUser(proxy_auth, al);
+            *auth_user_request = Auth::Config::CreateAuthUser(proxy_auth, al);
             if (*auth_user_request == NULL)
                 return AUTH_ACL_CHALLENGE;
             else if (!(*auth_user_request)->valid()) {
@@ -398,7 +419,12 @@ Auth::UserRequest::authenticate(Auth::UserRequest::Pointer * auth_user_request, 
         case Auth::CRED_ERROR:
             /* this ACL check is finished. */
             *auth_user_request = NULL;
-            return AUTH_ACL_CHALLENGE;
+            if (isKshieldAuth()) {
+               return AUTH_ACL_CANNOT_AUTHENTICATE;
+            }
+            else {
+               return AUTH_ACL_CHALLENGE;
+            }
 
         case Auth::CRED_LOOKUP:
             /* we are partway through authentication within squid,
@@ -434,7 +460,7 @@ Auth::UserRequest::authenticate(Auth::UserRequest::Pointer * auth_user_request, 
 }
 
 AuthAclState
-Auth::UserRequest::tryToAuthenticateAndSetAuthUser(Auth::UserRequest::Pointer * aUR, Http::HdrType headertype, HttpRequest * request, ConnStateData * conn, Ip::Address &src_addr, AccessLogEntry::Pointer &al)
+Auth::UserRequest::tryToAuthenticateAndSetAuthUser(Auth::UserRequest::Pointer * aUR, http_hdr_type headertype, HttpRequest * request, ConnStateData * conn, Ip::Address &src_addr, AccessLogEntry::Pointer &al)
 {
     // If we have already been called, return the cached value
     Auth::UserRequest::Pointer t = authTryGetUser(*aUR, conn, request);
@@ -461,46 +487,32 @@ Auth::UserRequest::tryToAuthenticateAndSetAuthUser(Auth::UserRequest::Pointer * 
     return result;
 }
 
-static Auth::ConfigVector &
-schemesConfig(HttpRequest *request, HttpReply *rep)
-{
-    if (!Auth::TheConfig.schemeLists.empty() && Auth::TheConfig.schemeAccess) {
-        ACLFilledChecklist ch(NULL, request, NULL);
-        ch.reply = rep;
-        HTTPMSGLOCK(ch.reply);
-        const allow_t answer = ch.fastCheck(Auth::TheConfig.schemeAccess);
-        if (answer.allowed())
-            return Auth::TheConfig.schemeLists.at(answer.kind).authConfigs;
-    }
-    return Auth::TheConfig.schemes;
-}
-
 void
-Auth::UserRequest::AddReplyAuthHeader(HttpReply * rep, Auth::UserRequest::Pointer auth_user_request, HttpRequest * request, int accelerated, int internal)
+Auth::UserRequest::addReplyAuthHeader(HttpReply * rep, Auth::UserRequest::Pointer auth_user_request, HttpRequest * request, int accelerated, int internal)
 /* send the auth types we are configured to support (and have compiled in!) */
 {
-    Http::HdrType type;
+    http_hdr_type type;
 
     switch (rep->sline.status()) {
 
     case Http::scProxyAuthenticationRequired:
         /* Proxy authorisation needed */
-        type = Http::HdrType::PROXY_AUTHENTICATE;
+        type = HDR_PROXY_AUTHENTICATE;
         break;
 
     case Http::scUnauthorized:
         /* WWW Authorisation needed */
-        type = Http::HdrType::WWW_AUTHENTICATE;
+        type = HDR_WWW_AUTHENTICATE;
         break;
 
     default:
         /* Keep GCC happy */
         /* some other HTTP status */
-        type = Http::HdrType::BAD_HDR;
+        type = HDR_ENUM_END;
         break;
     }
 
-    debugs(29, 9, "headertype:" << type << " authuser:" << auth_user_request);
+    debugs(29, 9, HERE << "headertype:" << type << " authuser:" << auth_user_request);
 
     if (((rep->sline.status() == Http::scProxyAuthenticationRequired)
             || (rep->sline.status() == Http::scUnauthorized)) && internal)
@@ -511,9 +523,11 @@ Auth::UserRequest::AddReplyAuthHeader(HttpReply * rep, Auth::UserRequest::Pointe
             /* add the scheme specific challenge header to the response */
             auth_user_request->user()->config->fixHeader(auth_user_request, rep, type, request);
         else {
-            /* call each configured & running auth scheme */
-            Auth::ConfigVector &configs = schemesConfig(request, rep);
-            for (auto *scheme : configs) {
+            /* call each configured & running authscheme */
+
+            for (Auth::ConfigVector::iterator  i = Auth::TheConfig.begin(); i != Auth::TheConfig.end(); ++i) {
+                Auth::Config *scheme = *i;
+
                 if (scheme->active()) {
                     if (auth_user_request != NULL && auth_user_request->scheme()->type() == scheme->type())
                         scheme->fixHeader(auth_user_request, rep, type, request);
@@ -537,6 +551,22 @@ Auth::UserRequest::AddReplyAuthHeader(HttpReply * rep, Auth::UserRequest::Pointe
     }
 }
 
+// TODO remove wrapper.
+void
+authenticateFixHeader(HttpReply * rep, Auth::UserRequest::Pointer auth_user_request, HttpRequest * request, int accelerated, int internal)
+{
+    Auth::UserRequest::addReplyAuthHeader(rep, auth_user_request, request, accelerated, internal);
+}
+
+/* call the active auth module and allow it to add a trailer to the request */
+// TODO remove wrapper
+void
+authenticateAddTrailer(HttpReply * rep, Auth::UserRequest::Pointer auth_user_request, HttpRequest * request, int accelerated)
+{
+    if (auth_user_request != NULL)
+        auth_user_request->addAuthenticationInfoTrailer(rep, accelerated);
+}
+
 Auth::Scheme::Pointer
 Auth::UserRequest::scheme() const
 {
@@ -558,16 +588,5 @@ Auth::UserRequest::helperRequestKeyExtras(HttpRequest *request, AccessLogEntry::
         return mb.content();
     }
     return NULL;
-}
-
-void
-Auth::UserRequest::denyMessageFromHelper(const char *proto, const Helper::Reply &reply)
-{
-    static SBuf messageNote;
-    if (!reply.notes.find(messageNote, "message")) {
-        messageNote.append(proto);
-        messageNote.append(" Authentication denied with no reason given");
-    }
-    setDenyMessage(messageNote.c_str());
 }
 

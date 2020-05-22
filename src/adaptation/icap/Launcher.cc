@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -17,7 +17,9 @@
 #include "adaptation/icap/Xaction.h"
 #include "base/TextException.h"
 #include "globals.h"
+#include "HttpMsg.h"
 #include "HttpReply.h"
+#include "HttpRequest.h"
 
 Adaptation::Icap::Launcher::Launcher(const char *aTypeName,
                                      Adaptation::ServicePointer &aService):
@@ -145,7 +147,7 @@ bool Adaptation::Icap::Launcher::canRepeat(Adaptation::Icap::XactAbortInfo &info
     cl->reply = info.icapReply;
     HTTPMSGLOCK(cl->reply);
 
-    bool result = cl->fastCheck().allowed();
+    bool result = cl->fastCheck() == ACCESS_ALLOWED;
     delete cl;
     return result;
 }

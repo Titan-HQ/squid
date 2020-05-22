@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -9,16 +9,16 @@
 #ifndef SQUID_HTTPREQUEST_H
 #define SQUID_HTTPREQUEST_H
 
-#include "anyp/Uri.h"
 #include "base/CbcPointer.h"
-#include "dns/forward.h"
+#include "Debug.h"
 #include "err_type.h"
 #include "HierarchyLogEntry.h"
-#include "http/Message.h"
-#include "http/RequestMethod.h"
-#include "MasterXaction.h"
+#include "HttpMsg.h"
+#include "HttpRequestMethod.h"
 #include "Notes.h"
 #include "RequestFlags.h"
+#include "URL.h"
+#include "ttn_cidr_types.hxx"
 
 #if USE_AUTH
 #include "auth/UserRequest.h"
@@ -34,31 +34,36 @@
 #include "eui/Eui64.h"
 #endif
 
+#include "TAPE.hxx"
+
 class ConnStateData;
-class Downloader;
-class AccessLogEntry;
-typedef RefCount<AccessLogEntry> AccessLogEntryPointer;
 
 /*  Http Request */
-void httpRequestPack(void *obj, Packable *p);
+void httpRequestPack(void *obj, Packer *p);
 
 class HttpHdrRange;
+class DnsLookupDetails;
 
-class HttpRequest: public Http::Message
+class HttpRequest: public HttpMsg, public titan_v3::IHRequest
 {
-    MEMPROXY_CLASS(HttpRequest);
 
 public:
+    uint64_t _destruct{};
     typedef RefCount<HttpRequest> Pointer;
 
-    HttpRequest(const MasterXaction::Pointer &);
-    HttpRequest(const HttpRequestMethod& aMethod, AnyP::ProtocolType aProtocol, const char *schemeImage, const char *aUrlpath, const MasterXaction::Pointer &);
+    MEMPROXY_CLASS(HttpRequest);
+    HttpRequest();
+    HttpRequest(const HttpRequestMethod& aMethod, AnyP::ProtocolType aProtocol, const char *const aUrlpath);
     ~HttpRequest();
-    virtual void reset();
 
-    void initHTTP(const HttpRequestMethod& aMethod, AnyP::ProtocolType aProtocol, const char *schemeImage, const char *aUrlpath);
+    void lock(const char * const a_place,const uint32_t a_no) const final ;
+    uint32_t unlock(const char * const a_place,const uint32_t a_no) const final ;
 
-    virtual HttpRequest *clone() const;
+    void reset() final;
+
+    void initHTTP(const HttpRequestMethod& aMethod, AnyP::ProtocolType aProtocol, const char * const aUrlpath);
+
+    HttpRequest *clone() const final;
 
     /// Whether response to this request is potentially cachable
     /// \retval false  Not cacheable.
@@ -70,9 +75,27 @@ public:
     /// whether the client is likely to be able to handle a 1xx reply
     bool canHandle1xx() const;
 
-    /// \returns a pointer to a local static buffer containing request URI
-    /// that honors strip_query_terms and %-encodes unsafe URI characters
-    char *canonicalCleanUrl() const;
+    /* Now that we care what host contains it is better off being protected. */
+    /* HACK: These two methods are only inline to get around Makefile dependancies */
+    /*      caused by HttpRequest being used in places it really shouldn't.        */
+    /*      ideally they would be methods of URL instead. */
+    inline void SetHost(const char *src) 
+    {
+       set_host(src);
+    }
+
+    std::string orig_host{}; //titanlib
+
+    inline const char* GetHost(void) const noexcept 
+    { 
+       return host; 
+    }
+
+    inline int GetHostIsNumeric(void) const noexcept
+    { 
+       return flags.ttn_is_host_numeric; 
+    }
+
 
 #if USE_ADAPTATION
     /// Returns possibly nil history, creating it if adapt. logging is enabled
@@ -87,15 +110,12 @@ public:
     Adaptation::Icap::History::Pointer icapHistory() const;
 #endif
 
-    void recordLookup(const Dns::LookupDetails &detail);
+    void recordLookup(const DnsLookupDetails &detail);
 
     /// sets error detail if no earlier detail was available
     void detailError(err_type aType, int aDetail);
     /// clear error details, useful for retries/repeats
     void clearError();
-
-    /// associates the request with a from-client connection manager
-    void manager(const CbcPointer<ConnStateData> &aMgr, const AccessLogEntryPointer &al);
 
 protected:
     void clean();
@@ -104,9 +124,15 @@ protected:
 
 public:
     HttpRequestMethod method;
-    AnyP::Uri url; ///< the request URI
+
+    // TODO expand to include all URI parts
+    URL url; ///< the request URI (scheme only)
+
+    char login[MAX_LOGIN_SZ]={};
 
 private:
+    char host[SQUIDHOSTNAMELEN]={};
+
 #if USE_ADAPTATION
     mutable Adaptation::History::Pointer adaptHistory_; ///< per-HTTP transaction info
 #endif
@@ -115,12 +141,16 @@ private:
 #endif
 
 public:
+    Ip::Address host_addr;
 #if USE_AUTH
     Auth::UserRequest::Pointer auth_user_request;
 #endif
+    unsigned short port{};
 
-    /// RFC 7230 section 5.5 - Effective Request URI
-    const SBuf &effectiveRequestUri() const;
+    String urlpath;
+
+    char *canonical{};
+    size_t canonical_sz{}; //tx
 
     /**
      * If defined, store_id_program mapped the request URL to this ID.
@@ -130,13 +160,13 @@ public:
      */
     String store_id;
 
-    RequestFlags flags;
+    RequestFlags flags{};
 
-    HttpHdrRange *range;
+    HttpHdrRange *range{};
 
-    time_t ims;
+    time_t ims{};
 
-    int imslen;
+    int imslen{};
 
     Ip::Address client_addr;
 
@@ -148,23 +178,25 @@ public:
 
     HierarchyLogEntry hier;
 
-    int dnsWait; ///< sum of DNS lookup delays in milliseconds, for %dt
+    int dnsWait{}; ///< sum of DNS lookup delays in milliseconds, for %dt
 
-    err_type errType;
-    int errDetail; ///< errType-specific detail about the transaction error
+    err_type errType{};
+    int errDetail{}; ///< errType-specific detail about the transaction error
 
-    char *peer_login;       /* Configured peer login:password */
+    char *peer_login{};       /* Configured peer login:password */
 
-    char *peer_host;           /* Selected peer host*/
+    char *peer_host{};           /* Selected peer host*/
 
-    time_t lastmod;     /* Used on refreshes */
+    time_t lastmod{};     /* Used on refreshes */
 
     /// The variant second-stage cache key. Generated from Vary header pattern for this request.
-    SBuf vary_headers;
+    SBuf vary_headers{};
 
-    char *peer_domain;      /* Configured peer forceddomain */
+    char *peer_domain{};      /* Configured peer forceddomain */
 
     String myportname; // Internal tag name= value from port this requests arrived in.
+
+    NotePairs::Pointer notes; ///< annotations added by the note directive and helpers
 
     String tag;         /* Internal tag for this request */
 
@@ -182,37 +214,46 @@ public:
 
     /// A strong etag of the cached entry. Used for refreshing that entry.
     String etag;
+//-----------------
+    // Titax.
+    char* loggable_username{};    /* username that can be used in logging - may have been anonimized */
+    int* groups{};                /* malloc'd list of groups, allocated by send free'd when the header is created */
+    int group_count{};            /* the number of groups in groups */
+    bool has_been_logged{};
 
-    /// whether we have responded with HTTP 100 or FTP 150 already
-    bool forcedBodyContinuation;
-
+//-----------
 public:
     bool multipartRangeRequest() const;
 
-    bool parseFirstLine(const char *start, const char *end);
+    bool parseFirstLine(const char *start, const char *end) final; 
 
-    virtual bool expectingBody(const HttpRequestMethod& unused, int64_t&) const;
+    int parseHeader(const char *parse_start, int len);
+
+    virtual bool expectingBody(const HttpRequestMethod& unused, int64_t&) const final;
 
     bool bodyNibbled() const; // the request has a [partially] consumed body
 
-    int prefixLen() const;
+    int prefixLen();
 
     void swapOut(StoreEntry * e);
 
-    void pack(Packable * p) const;
+    void pack(Packer * p);
 
-    static void httpRequestPack(void *obj, Packable *p);
+    static void httpRequestPack(void *obj, Packer *p);
 
-    static HttpRequest * FromUrl(const char * url, const MasterXaction::Pointer &, const HttpRequestMethod &method = Http::METHOD_GET);
+    static HttpRequest * CreateFromUrlAndMethod(char * url, const HttpRequestMethod& method);
 
-    ConnStateData *pinnedConnection();
+    static HttpRequest * CreateFromUrl(char * url);
+
+    ConnStateData *const pinnedConnection();
 
     /**
      * Returns the current StoreID for the request as a nul-terminated char*.
      * Always returns the current id for the request
-     * (either the effective request URI or modified ID by the helper).
+     * (either the request canonical url or modified ID by the helper).
+     * Does not return NULL.
      */
-    const SBuf storeId();
+    const char *storeId();
 
     /**
      * The client connection manager, if known;
@@ -221,55 +262,317 @@ public:
      */
     CbcPointer<ConnStateData> clientConnectionManager;
 
-    /// The Downloader object which initiated the HTTP request if any
-    CbcPointer<Downloader> downloader;
-
-    /// the master transaction this request belongs to. Never nil.
-    MasterXaction::Pointer masterXaction;
-
     /// forgets about the cached Range header (for a reason)
     void ignoreRange(const char *reason);
     int64_t getRangeOffsetLimit(); /* the result of this function gets cached in rangeOffsetLimit */
 
-    /// \returns existing non-empty transaction annotations,
-    /// creates and returns empty annotations otherwise
-    NotePairs::Pointer notes();
-    bool hasNotes() const { return bool(theNotes) && !theNotes->empty(); }
-
-    virtual void configureContentLengthInterpreter(Http::ContentLengthInterpreter &) {}
-
-    /// Parses request header using Parser.
-    /// Use it in contexts where the Parser object is available.
-    bool parseHeader(Http1::Parser &hp);
-    /// Parses request header from the buffer.
-    /// Use it in contexts where the Parser object not available.
-    bool parseHeader(const char *buffer, const size_t size);
-
 private:
+    const char *packableURI(bool full_uri) const;
+
     mutable int64_t rangeOffsetLimit;  /* caches the result of getRangeOffsetLimit */
 
-    /// annotations added by the note directive and helpers
-    /// and(or) by annotate_transaction/annotate_client ACLs.
-    NotePairs::Pointer theNotes;
 protected:
-    virtual void packFirstLineInto(Packable * p, bool full_uri) const;
+    void packFirstLineInto(Packer * p, bool full_uri) const final;
 
-    virtual bool sanityCheckStartLine(const char *buf, const size_t hdr_len, Http::StatusCode *error);
+    bool sanityCheckStartLine(MemBuf *buf, const size_t hdr_len, Http::StatusCode *error) final;
 
-    virtual void hdrCacheInit();
+    void hdrCacheInit() final;
 
-    virtual bool inheritProperties(const Http::Message *);
+    bool inheritProperties(const HttpMsg *aMsg) final;
+
+///////////////////////////////////////////////////////////////////////////////
+//	IHRequest
+///////////////////////////////////////////////////////////////////////////////
+public:
+
+    std::string headers_get_all(std::string sep_={}) final
+    {
+        std::string r_{};
+        r_.reserve(1024);
+
+        for ( const auto * e_ : this->header.entries ) {
+
+            if ( e_ ){
+
+                const char * const cn_=e_->name.termedBuf();
+                const char * const cv_=e_->value.termedBuf();
+                if ( cn_ && cn_ ){
+
+                    r_+=sep_;
+                    r_+=cn_;
+                    r_+={':'};
+                    r_+=cv_;
+                    r_+={'\n'};
+
+                }
+            }
+        }
+
+        return r_;
+    }
+
+   void set_host(const std::string &) final;
+
+    void set_path(const std::string & s_) final 
+    {
+      safe_free(canonical); // force its re-build
+      canonical = nullptr;
+      urlpath.clean();
+      if (s_.size()) urlpath=s_.c_str();
+    }
+
+    void headers_put(const t_http_hdr_types i_, const std::string & s_) final
+    {
+        this->header.putStr(i_,s_.c_str());
+    }
+
+    std::string get_host(void) const noexcept final 
+    {
+        if ( const char *const _c=this->GetHost() ) {
+
+            return std::string{_c};
+        }
+
+        return std::string{};
+    }
+
+    bool is_host_numeric(void) const noexcept final
+    {
+        return flags.ttn_is_host_numeric;
+    }
+
+    std::string get_path(void) const final
+    {
+        if ( const size_t s_=this->urlpath.size() ) {
+
+            if ( const char * const c_=this->urlpath.termedBuf() ) {
+
+                if ( *c_ ) {
+
+                    return std::string{ c_, s_ };
+                }
+            }
+        }
+
+        return std::string {};
+    }
+
+    titan_v3::raw_ipaddr_t get_client_addr(void) final;
+
+    bool set_client_addr(const titan_v3::raw_ipaddr_t &) final;
+
+    titan_v3::raw_ipaddr_t get_indirect_client_addr(void) final;
+
+    std::string get_x_forwarded_for_iterator(void) const final
+    {
+        if ( const size_t s_=this->x_forwarded_for_iterator.size() ) {
+
+            if ( const char * const c_=this->x_forwarded_for_iterator.termedBuf() ) {
+
+                if( *c_ ) {
+
+                    return std::string { c_, s_ };
+                }
+            }
+        }
+
+        return std::string {};
+    }
+
+    std::string  get_extacl_user(void) const final
+    {
+        if ( const size_t s_=this->extacl_user.size() ) {
+
+            if ( const char * const c_=this->extacl_user.termedBuf() ) {
+
+                if ( *c_ ) {
+
+                    return std::string { c_, s_ };
+                }
+            }
+        }
+
+        return std::string {};
+    }
+
+    std::string  get_extacl_passwd(void) const final
+    {
+        if ( const size_t s_=this->extacl_passwd.size() ) {
+
+            if ( const  char * const c_=this->extacl_passwd.termedBuf() ) {
+
+                if(*c_) {
+
+                    return std::string { c_, s_ };
+                }
+            }
+        }
+
+        return std::string {};
+    }
+
+    std::string  get_extacl_log(void) const final
+    {
+        if ( const size_t s_=this->extacl_log.size() ) {
+
+            if ( const  char * const c_=this->extacl_log.termedBuf() ) {
+
+                if( *c_ ) {
+
+                    return std::string { c_, s_ };
+                }
+            }
+        }
+        return std::string {};
+    }
+
+    std::string  get_extacl_message(void) const final
+    {
+        if ( const size_t s_=this->extacl_message.size() ) {
+
+            if ( const char * const c_=this->extacl_message.termedBuf() ) {
+
+                if(*c_) {
+
+                    return std::string { c_, s_ };
+                }
+            }
+        }
+
+        return std::string {};
+    }
+
+    int  headers_has(const t_http_hdr_types _i) const final
+    {
+        return (this->header.has((http_hdr_type)_i));
+    }
+
+    std::string headers_get(const t_http_hdr_types _i) final
+    {
+        if ( const String * const str_ =this->header.getStrEx((http_hdr_type)_i) ) {
+
+            if ( const size_t s_=str_->size() ) {
+
+                if ( const char * const c_=str_->termedBuf() ) {
+
+                    if( *c_ ) {
+
+                        return std::string{ c_, s_ };
+                    }
+                }
+            }
+        }
+
+        return std::string {};
+    }
+
+    std::string headers_getex(const t_http_hdr_types _i)
+    {
+        if ( const String * const pstr=this->header.getStrEx((http_hdr_type)_i) ) {
+
+            if (const size_t s_=pstr->size()){
+
+                if (const char * const c_=pstr->termedBuf()){
+
+                    if (*c_) {
+
+                        return std::string{ c_, s_ };
+                    }
+                }
+            }
+        }
+
+        return std::string {};
+    }
+
+    int headers_del(const t_http_hdr_types _i) final
+    {
+        return (this->header.delById(_i));
+    }
+
+    void  headers_clear(void) final
+    {
+        this->header.clean();
+    }
+
+    int get_authenticateUserAuthenticated(void) const final
+    {
+        return authenticateUserAuthenticated(this->auth_user_request);
+    }
+
+    std::string get_auth_user_request_username(void) const final
+    {
+        if ( const  char * const _c=this->auth_user_request->username() ) {
+
+            if(*_c) {
+
+                return std::string {_c};
+            }
+        }
+        return std::string {};
+    }
+
+    std::string get_canonical(void) final;
+
+    t_proto_types get_protocol(void) const final
+    {
+        return (this->url.getScheme());
+    }
+
+    bool set_protocol(t_proto_types _p) final
+    {
+        this->url.setScheme(_p);
+        return true;
+    }
+
+    unsigned short get_port(void) const noexcept final 
+    {
+        return this->port;
+    }
+
+    void set_port(const size_t _p) noexcept final 
+    {
+        this->port=(unsigned short) _p;
+    }
+
+    titan_v3::IHRequestFlags & get_flags(void) noexcept final
+    {
+        return this->flags;
+    }
+
+    titan_v3::IBodyPipe * get_bodypipe(void) const final
+    {
+        return ((titan_v3::IBodyPipe *const)this->body_pipe.getRaw());
+    }
+
+    t_method_type get_method(void) const noexcept final 
+    {
+        return this->method.id();
+    }
+
+    bool set_method(const t_method_type _m) noexcept final 
+    {
+        this->method=static_cast<Http::MethodType>(_m);
+        return (this->method.id()==_m);
+    }
+
+    int64_t get_content_length(void) const noexcept final 
+    {
+        return this->content_length;
+    }
+
+    bool is_target_server(void) const final;
+    static bool is_target_server(const Comm::ConnectionPointer &);
+    std::string get_sni(void) const final;
+    bool can_report_errors(void) const final;
+   
 };
 
-class ConnStateData;
-/**
- * Updates ConnStateData ids and HttpRequest notes from helpers received notes.
- */
-void UpdateRequestNotes(ConnStateData *csd, HttpRequest &request, NotePairs const &notes);
+//temporary change to add more traceability
+extern t_HttpRmap _RQmap;
 
-/// \returns listening/*_port address used by the client connection (or nil)
-/// nil parameter(s) indicate missing caller information and are handled safely
-const Ip::Address *FindListeningPortAddress(const HttpRequest *, const AccessLogEntry *);
+
+MEMPROXY_CLASS_INLINE(HttpRequest);
 
 #endif /* SQUID_HTTPREQUEST_H */
 

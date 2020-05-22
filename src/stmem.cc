@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -10,7 +10,6 @@
 
 #include "squid.h"
 #include "Generic.h"
-#include "HttpReply.h"
 #include "mem_node.h"
 #include "MemObject.h"
 #include "profiler/Profiler.h"
@@ -104,7 +103,7 @@ mem_hdr::freeDataUpto(int64_t target_offset)
 int
 mem_hdr::appendToNode(mem_node *aNode, const char *data, int maxLength)
 {
-    size_t result = writeAvailable (aNode, aNode->nodeBuffer.offset + aNode->nodeBuffer.length,maxLength, data);
+    size_t result = writeAvailable (aNode, aNode->nodeBuffer.offset + aNode->nodeBuffer.length ,maxLength, data);
     return result;
 }
 
@@ -347,7 +346,7 @@ mem_hdr::write (StoreIOBuffer const &writeBuffer)
     if (unionNotEmpty(writeBuffer)) {
         debugs(19, DBG_CRITICAL, "mem_hdr::write: writeBuffer: " << writeBuffer.range());
         debugDump();
-        fatal_dump("Attempt to overwrite already in-memory data. Preceding this there should be a mem_hdr::write output that lists the attempted write, and the currently present data. Please get a 'backtrace full' from this error - using the generated core, and file a bug report with the squid developers including the last 10 lines of cache.log and the backtrace.\n");
+        fatal_dump("Attempt to overwrite already in-memory data. Preceeding this there should be a mem_hdr::write output that lists the attempted write, and the currently present data. Please get a 'backtrace full' from this error - using the generated core, and file a bug report with the squid developers including the last 10 lines of cache.log and the backtrace.\n");
         PROF_stop(mem_hdr_write);
         return false;
     }

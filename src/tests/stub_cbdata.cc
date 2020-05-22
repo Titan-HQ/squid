@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -13,23 +13,27 @@
 #include "tests/STUB.h"
 
 void cbdataRegisterWithCacheManager(void) STUB
-void *cbdataInternalAlloc(cbdata_type, const char *, int sz) {
+void *cbdataInternalAlloc(cbdata_type type, const char *, int sz) {
     return xcalloc(1, sz);
 }
 void *cbdataInternalFree(void *p, const char *, int) {
     xfree(p);
-    return nullptr;
+    return NULL;
 }
 #if USE_CBDATA_DEBUG
-void cbdataInternalLockDbg(const void *, const char *, int) STUB
-void cbdataInternalUnlockDbg(const void *, const char *, int) STUB
-int cbdataInternalReferenceDoneValidDbg(void **, void **, const char *, int) STUB_RETVAL(0)
+void *cbdataInternalAllocDbg(cbdata_type type, const char *, int) STUB_RETVAL(NULL)
+void *cbdataInternalFreeDbg(void *p, const char *, int) STUB_RETVAL(NULL)
+void cbdataInternalLockDbg(const void *p, const char *, int) STUB
+void cbdataInternalUnlockDbg(const void *p, const char *, int) STUB
+int cbdataInternalReferenceDoneValidDbg(void **p, void **tp, const char *, int) STUB_RETVAL(0)
 #else
-void cbdataInternalLock(const void *) STUB
-void cbdataInternalUnlock(const void *) STUB
-int cbdataInternalReferenceDoneValid(void **, void **) STUB_RETVAL(0)
+void *cbdataInternalAlloc(cbdata_type type) STUB_RETVAL(NULL)
+void *cbdataInternalFree(void *p) STUB_RETVAL(NULL)
+void cbdataInternalLock(const void *p) STUB
+void cbdataInternalUnlock(const void *p) STUB
+int cbdataInternalReferenceDoneValid(void **p, void **tp) STUB_RETVAL(0)
 #endif
 
-int cbdataReferenceValid(const void *) STUB_RETVAL(0)
-cbdata_type cbdataInternalAddType(cbdata_type, const char *, int) STUB_RETVAL(CBDATA_UNKNOWN)
+int cbdataReferenceValid(const void *p) STUB_RETVAL(0)
+cbdata_type cbdataInternalAddType(cbdata_type type, const char *label, int size, FREE * free_func) STUB_RETVAL(CBDATA_UNKNOWN)
 

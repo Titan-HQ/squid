@@ -1,4 +1,4 @@
-## Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+## Copyright (C) 1996-2016 The Squid Software Foundation and contributors
 ##
 ## Squid software is distributed under GPLv2+ license and includes
 ## contributions from numerous individuals and organizations.
@@ -8,11 +8,20 @@
 include $(top_srcdir)/src/Common.am
 include $(top_srcdir)/src/TestHeaders.am
 
-DIST_SUBDIRS= ecap icap
+## make a list of directories for configured adaptation schemes
 SUBDIRS =
+
+if USE_ICAP_CLIENT
+SUBDIRS += icap
+endif
+
+if USE_ECAP
+SUBDIRS += ecap
+endif
 
 noinst_LTLIBRARIES = libadaptation.la
 
+## start with the code shared among all adaptation schemes
 libadaptation_la_SOURCES = \
 	AccessCheck.cc \
 	AccessCheck.h \
@@ -44,17 +53,9 @@ libadaptation_la_SOURCES = \
 	ServiceFilter.cc \
 	ServiceFilter.h \
 	History.cc \
-	History.h
+	History.h 
 
-libadaptation_la_LIBADD =
+# add libraries for specific adaptation schemes
+libadaptation_la_LIBADD = $(ECAP_LIBS) $(ICAP_LIBS)
 
-if ENABLE_ECAP
-SUBDIRS += ecap
-libadaptation_la_LIBADD += ecap/libecapsquid.la
-endif
-
-if ENABLE_ICAP_CLIENT
-SUBDIRS += icap
-libadaptation_la_LIBADD += icap/libicap.la
-endif
-
+libadaptation_la_DEPENDENCIES = $(ECAP_LIBS) $(ICAP_LIBS)

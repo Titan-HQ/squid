@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -150,20 +150,20 @@ checkDepend(const std::string &directive, const char *name, const TypeList &type
             }
             if (entry == entries.end()) {
                 std::cerr << "ERROR: '" << directive << "' (" << name << ") depends on '" << *dep << "'\n";
-                exit(EXIT_FAILURE);
+                exit(1);
             }
         }
         return;
     }
     std::cerr << "ERROR: Dependencies for cf.data type '" << name << "' used in ' " << directive << "' not defined\n" ;
-    exit(EXIT_FAILURE);
+    exit(1);
 }
 
 static void
 usage(const char *program_name)
 {
     std::cerr << "Usage: " << program_name << " cf.data cf.data.depend\n";
-    exit(EXIT_FAILURE);
+    exit(1);
 }
 
 static void
@@ -204,7 +204,7 @@ main(int argc, char *argv[])
     if (fp.fail()) {
         std::cerr << "Error while opening type dependencies file '" <<
                   type_depend << "': " << strerror(errno) << std::endl;
-        exit(EXIT_FAILURE);
+        exit(1);
     }
 
     while (fp.good()) {
@@ -231,7 +231,7 @@ main(int argc, char *argv[])
     if (fp.fail()) {
         std::cerr << "Error while opening input file '" <<
                   input_filename << "': " << strerror(errno) << std::endl;
-        exit(EXIT_FAILURE);
+        exit(1);
     }
 
     state = sSTART;
@@ -247,14 +247,14 @@ main(int argc, char *argv[])
         if (strncmp(buff, "IF ", 3) == 0) {
             if ((ptr = strtok(buff + 3, WS)) == NULL) {
                 errorMsg(input_filename, linenum, "Missing IF parameter");
-                exit(EXIT_FAILURE);
+                exit(1);
             }
             IFDEFS.push(ptr);
             continue;
         } else if (strcmp(buff, "ENDIF") == 0) {
             if (IFDEFS.size() == 0) {
                 errorMsg(input_filename, linenum, "ENDIF without IF first");
-                exit(EXIT_FAILURE);
+                exit(1);
             }
             IFDEFS.pop();
         } else if (!IFDEFS.size() || isDefined(IFDEFS.top()))
@@ -270,7 +270,7 @@ main(int argc, char *argv[])
 
                     if ((name = strtok(buff + 5, WS)) == NULL) {
                         errorMsg(input_filename, linenum, buff);
-                        exit(EXIT_FAILURE);
+                        exit(1);
                     }
 
                     entries.push_back(name);
@@ -287,7 +287,7 @@ main(int argc, char *argv[])
                     state = sDOC;
                 } else {
                     errorMsg(input_filename, linenum, buff);
-                    exit(EXIT_FAILURE);
+                    exit(1);
                 }
 
                 break;
@@ -336,14 +336,14 @@ main(int argc, char *argv[])
                 } else if (!strncmp(buff, "LOC:", 4)) {
                     if ((ptr = strtok(buff + 4, WS)) == NULL) {
                         errorMsg(input_filename, linenum, buff);
-                        exit(EXIT_FAILURE);
+                        exit(1);
                     }
 
                     curr.loc = ptr;
                 } else if (!strncmp(buff, "TYPE:", 5)) {
                     if ((ptr = strtok(buff + 5, WS)) == NULL) {
                         errorMsg(input_filename, linenum, buff);
-                        exit(EXIT_FAILURE);
+                        exit(1);
                     }
 
                     /* hack to support arrays, rather than pointers */
@@ -357,7 +357,7 @@ main(int argc, char *argv[])
                 } else if (!strncmp(buff, "IFDEF:", 6)) {
                     if ((ptr = strtok(buff + 6, WS)) == NULL) {
                         errorMsg(input_filename, linenum, buff);
-                        exit(EXIT_FAILURE);
+                        exit(1);
                     }
 
                     curr.ifdef = ptr;
@@ -367,7 +367,7 @@ main(int argc, char *argv[])
                     state = sSTART;
                 } else {
                     errorMsg(input_filename, linenum, buff);
-                    exit(EXIT_FAILURE);
+                    exit(1);
                 }
             }
             break;
@@ -391,18 +391,17 @@ main(int argc, char *argv[])
                     entries.back().nocomment.push_back(buff);
                 }
                 break;
-#if 0
+
             case sEXIT:
                 assert(0);      /* should never get here */
                 break;
-#endif
             }
 
     }
 
     if (state != sEXIT) {
         errorMsg(input_filename, linenum, "Error: unexpected EOF");
-        exit(EXIT_FAILURE);
+        exit(1);
     }
 
     fp.close();
@@ -421,7 +420,7 @@ main(int argc, char *argv[])
     if (!fout.good()) {
         std::cerr << "Error while opening output .c file '" <<
                   output_filename << "': " << strerror(errno) << std::endl;
-        exit(EXIT_FAILURE);
+        exit(1);
     }
 
     fout <<  "/*\n" <<
@@ -452,7 +451,7 @@ main(int argc, char *argv[])
     if (!fout.good()) {
         std::cerr << "Error while opening output conf file '" <<
                   output_filename << "': " << strerror(errno) << std::endl;
-        exit(EXIT_FAILURE);
+        exit(1);
     }
 
     gen_conf(entries, fout, 1);
@@ -463,7 +462,7 @@ main(int argc, char *argv[])
     if (!fout.good()) {
         std::cerr << "Error while opening output short conf file '" <<
                   output_filename << "': " << strerror(errno) << std::endl;
-        exit(EXIT_FAILURE);
+        exit(1);
     }
     gen_conf(entries, fout, 0);
     fout.close();
@@ -478,13 +477,11 @@ gen_default(const EntryList &head, std::ostream &fout)
     fout << "static void" << std::endl <<
          "default_line(const char *s)" << std::endl <<
          "{" << std::endl <<
-         "    char *tmp_line = xstrdup(s);" << std::endl <<
-         "    int len = strlen(tmp_line);" << std::endl <<
-         "    ProcessMacros(tmp_line, len);" << std::endl <<
-         "    xstrncpy(config_input_line, tmp_line, sizeof(config_input_line));" << std::endl <<
+         "    LOCAL_ARRAY(char, tmp_line, BUFSIZ);" << std::endl <<
+         "    xstrncpy(tmp_line, s, BUFSIZ);" << std::endl <<
+         "    xstrncpy(config_input_line, s, BUFSIZ);" << std::endl <<
          "    config_lineno++;" << std::endl <<
          "    parse_line(tmp_line);" << std::endl <<
-         "    xfree(tmp_line);" << std::endl <<
          "}" << std::endl << std::endl;
     fout << "static void" << std::endl <<
          "default_all(void)" << std::endl <<
@@ -553,7 +550,7 @@ gen_default_if_none(const EntryList &head, std::ostream &fout)
 
         if (!entry->defaults.preset.empty()) {
             std::cerr << "ERROR: " << entry->name << " has preset defaults. DEFAULT_IF_NONE cannot be true." << std::endl;
-            exit(EXIT_FAILURE);
+            exit(1);
         }
 
         if (entry->ifdef.size())

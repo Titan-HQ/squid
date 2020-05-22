@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -10,8 +10,6 @@
 
 #ifndef _SQUID_SRC_IP_ADDRESS_H
 #define _SQUID_SRC_IP_ADDRESS_H
-
-#include "ip/forward.h"
 
 #include <iosfwd>
 #include <ostream>
@@ -34,6 +32,10 @@
 namespace Ip
 {
 
+/// Length of buffer that needs to be allocated to old a null-terminated IP-string
+// Yuck. But there are still structures that need it to be an 'integer constant'.
+#define MAX_IPSTRLEN  75
+
 /**
  * Holds and manipulates IPv4, IPv6, and Socket Addresses.
  */
@@ -44,6 +46,7 @@ public:
     /** @name Constructors and Destructor */
     /*@{*/
     Address() { setEmpty(); }
+    Address(const Ip::Address &);
     Address(const struct in_addr &);
     Address(const struct sockaddr_in &);
     Address(const struct in6_addr &);
@@ -56,6 +59,7 @@ public:
 
     /** @name Assignment Operators */
     /*@{*/
+    Address& operator =(const Address &s);
     Address& operator =(struct sockaddr_in const &s);
     Address& operator =(struct sockaddr_storage const &s);
     Address& operator =(struct in_addr const &s);
@@ -74,6 +78,11 @@ public:
     bool operator <=(Address const &rhs) const;
     bool operator >(Address const &rhs) const;
     bool operator <(Address const &rhs) const;
+
+   inline operator std::string() const { 
+      char buf[MAX_IPSTRLEN];
+      return (toUrl(buf,MAX_IPSTRLEN));
+    }
 
 public:
     /* methods */
@@ -137,7 +146,7 @@ public:
     /*@}*/
 
     /** Retrieve the Port if stored.
-     \retval 0 Port is unset or an error occurred.
+     \retval 0 Port is unset or an error occured.
      \retval n Port associated with this address in host native -endian.
      */
     unsigned short port() const;
@@ -145,7 +154,7 @@ public:
     /** Set the Port value for an address.
      *  Replaces any previously existing Port value.
      \param port Port being assigned in host native -endian.
-     \retval 0 Port is unset or an error occurred.
+     \retval 0 Port is unset or an error occured.
      \retval n Port associated with this address in host native -endian.
      */
     unsigned short port(unsigned short port);
@@ -222,12 +231,6 @@ public:
      \return amount of buffer filled.
      */
     unsigned int toHostStr(char *buf, const unsigned int len) const;
-
-    /// Empties the address and then slowly imports the IP from a possibly
-    /// [bracketed] portless host. For the semi-reverse operation, see
-    /// toHostStr() which does export the port.
-    /// \returns whether the conversion was successful
-    bool fromHost(const char *hostWithoutPort);
 
     /**
      *  Convert the content into a Reverse-DNS string.
@@ -309,6 +312,19 @@ public:
     bool getInAddr(struct in_addr &) const; /* false if could not convert IPv6 down to IPv4 */
     void getSockAddr(struct sockaddr_in6 &) const;
     void getInAddr(struct in6_addr &) const;
+
+    /*
+     * This is a temporary solution to solve the compatibility between squid 3.0 and the new 3.4 version.
+     * In the old version we were using in_addr.s_addr to get the IP Address as only IPv4 was supported.
+     * Now the Address is encapsulated in this class to support IPv6, etc.
+     * For the moment we just return the IP address if it is IPv4 and 0 otherwise.
+     * In the future, we should add IPv6 support to Titax code.
+     */
+    inline uint32_t s_addr(void){
+       struct in_addr _buf={};
+       if (getInAddr(_buf)) return (_buf.s_addr);
+       return 0;
+    }
 
 private:
     /* Conversion for dual-type internals */

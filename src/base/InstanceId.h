@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2017 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -25,7 +25,7 @@ class InstanceId
 public:
     typedef unsigned int Value; ///< id storage type; \todo: parameterize?
 
-    InstanceId() {change();}
+    InstanceId(): value(0) {change();}
 
     operator Value() const { return value; }
     bool operator ==(const InstanceId &o) const { return value == o.value; }
@@ -33,22 +33,22 @@ public:
     void change();
 
     /// prints class-pecific prefix followed by ID value; \todo: use HEX for value printing?
-    std::ostream &print(std::ostream &) const;
+    std::ostream &print(std::ostream &os) const;
 
     /// returns the class-pecific prefix
-    const char * prefix() const;
+    const char * const prefix() const;
 
 public:
-    Value value = 0; ///< instance identifier
+    Value value; ///< instance identifier
 
 private:
-    InstanceId(const InstanceId &); ///< not implemented; IDs are unique
-    InstanceId& operator=(const InstanceId &); ///< not implemented
+    InstanceId(const InstanceId& right); ///< not implemented; IDs are unique
+    InstanceId& operator=(const InstanceId &right); ///< not implemented
 };
 
 /// convenience macro to instantiate Class-specific stuff in .cc files
 #define InstanceIdDefinitions(Class, pfx) \
-    template<> const char * \
+    template<> const char * const \
     InstanceId<Class>::prefix() const { \
         return pfx; \
     } \

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -16,8 +16,6 @@
 #include "fde.h"
 #include "http/StatusCode.h"
 #include "ip/Address.h"
-#include "PeerSelectState.h"
-#include "security/forward.h"
 #if USE_OPENSSL
 #include "ssl/support.h"
 #endif
@@ -36,6 +34,7 @@ namespace Ssl
 {
 class ErrorDetail;
 class CertValidationResponse;
+class PeerConnectorAnswer;
 };
 #endif
 
@@ -56,10 +55,8 @@ void GetMarkingsToServer(HttpRequest * request, Comm::Connection &conn);
 
 class HelperReply;
 
-class FwdState: public RefCountable, public PeerSelectionInitiator
+class FwdState : public RefCountable
 {
-    CBDATA_CHILD(FwdState);
-
 public:
     typedef RefCount<FwdState> Pointer;
     virtual ~FwdState();
@@ -69,18 +66,13 @@ public:
     static void Start(const Comm::ConnectionPointer &client, StoreEntry *, HttpRequest *, const AccessLogEntryPointer &alp);
     /// Same as Start() but no master xaction info (AccessLogEntry) available.
     static void fwdStart(const Comm::ConnectionPointer &client, StoreEntry *, HttpRequest *);
-    /// time left to finish the whole forwarding process (which started at fwdStart)
-    static time_t ForwardTimeout(const time_t fwdStart);
-    /// Whether there is still time to re-try after a previous connection failure.
-    /// \param fwdStart The start time of the peer selection/connection process.
-    static bool EnoughTimeToReForward(const time_t fwdStart);
 
     /// This is the real beginning of server connection. Call it whenever
     /// the forwarding server destination has changed and a new one needs to be opened.
     /// Produces the cannot-forward error on fail if no better error exists.
     void startConnectionOrFail();
 
-    void fail(ErrorState *err);
+    void fail(ErrorState *const err);
     void unregister(Comm::ConnectionPointer &conn);
     void unregister(int fd);
     void complete();
@@ -91,6 +83,7 @@ public:
     void connectStart();
     void connectDone(const Comm::ConnectionPointer & conn, Comm::Flag status, int xerrno);
     void connectTimeout(int fd);
+    time_t timeLeft() const; ///< the time left before the forwarding timeout expired
     bool checkRetry();
     bool checkRetriable();
     void dispatch();
@@ -106,15 +99,12 @@ public:
     /** return a ConnectionPointer to the current server connection (may or may not be open) */
     Comm::ConnectionPointer const & serverConnection() const { return serverConn; };
 
+    void print_internals( std::ostream & a_os );
+
 private:
     // hidden for safer management of self; use static fwdStart
     FwdState(const Comm::ConnectionPointer &client, StoreEntry *, HttpRequest *, const AccessLogEntryPointer &alp);
     void start(Pointer aSelf);
-    void stopAndDestroy(const char *reason);
-
-    /* PeerSelectionInitiator API */
-    virtual void noteDestination(Comm::ConnectionPointer conn) override;
-    virtual void noteDestinationsEnd(ErrorState *selectionError) override;
 
 #if STRICT_ORIGINAL_DST
     void selectPeerForIntercepted();
@@ -124,22 +114,24 @@ private:
     void completed();
     void retryOrBail();
     ErrorState *makeConnectingError(const err_type type) const;
-    void connectedToPeer(Security::EncryptorAnswer &answer);
+#if USE_OPENSSL
+    void connectedToPeer(Ssl::PeerConnectorAnswer &answer);
+#endif
     static void RegisterWithCacheManager(void);
 
     /// stops monitoring server connection for closure and updates pconn stats
     void closeServerConnection(const char *reason);
 
     void syncWithServerConn(const char *host);
-    void syncHierNote(const Comm::ConnectionPointer &server, const char *host);
-
 public:
+    void Bail();
     StoreEntry *entry;
     HttpRequest *request;
     AccessLogEntryPointer al; ///< info for the future access.log entry
 
     static void abort(void*);
 
+    uint64_t _id;
 private:
     Pointer self;
     ErrorState *err;
@@ -168,6 +160,9 @@ private:
     /// possible pconn race states
     typedef enum { raceImpossible, racePossible, raceHappened } PconnRace;
     PconnRace pconnRace; ///< current pconn race state
+    
+    // NP: keep this last. It plays with private/public
+    CBDATA_CLASS2(FwdState);
 };
 
 void getOutgoingAddress(HttpRequest * request, Comm::ConnectionPointer conn);

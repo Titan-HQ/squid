@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -8,12 +8,10 @@
 
 #include "squid.h"
 #include "base/CharacterSet.h"
-#include "tests/SBufFindTest.h"
-
+#include "SBufFindTest.h"
 #include <cppunit/extensions/HelperMacros.h>
 #include <cppunit/Message.h>
 #include <limits>
-#include <random>
 
 /* TODO: The whole SBufFindTest class is currently implemented as a single
    CppUnit test case (because we do not want to register and report every one
@@ -24,6 +22,7 @@
 SBufFindTest::SBufFindTest():
     caseLimit(std::numeric_limits<int>::max()),
     errorLimit(std::numeric_limits<int>::max()),
+    randomSeed(1),
     hushSimilar(true),
     maxHayLength(40),
     thePos(0),
@@ -45,6 +44,8 @@ SBufFindTest::SBufFindTest():
 void
 SBufFindTest::run()
 {
+    srandom(randomSeed);
+
     for (SBuf::size_type hayLen = 0U; hayLen <= maxHayLength; nextLen(hayLen, maxHayLength)) {
         const SBuf cleanHay = RandomSBuf(hayLen);
 
@@ -379,19 +380,19 @@ SBufFindTest::RandomSBuf(const int length)
         "0123456789"
         "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
         "abcdefghijklomnpqrstuvwxyz";
-
-    static std::mt19937 mt(time(0));
-
     // sizeof() counts the terminating zero at the end of characters
-    // and the distribution is an 'inclusive' value range, so -2
     // TODO: add \0 character (needs reporting adjustments to print it as \0)
-    static xuniform_int_distribution<uint8_t> dist(0, sizeof(characters)-2);
+    static const size_t charCount = sizeof(characters)-1;
 
-    SBuf buf;
-    buf.reserveCapacity(length);
-    for (int i = 0; i < length; ++i)
-        buf.append(characters[dist(mt)]);
-    return buf;
+    char buf[length];
+    for (int i = 0; i < length; ++i) {
+        const unsigned int pos = random() % charCount;
+        assert(pos < sizeof(characters));
+        assert(characters[pos] > 32);
+        buf[i] = characters[random() % charCount];
+    }
+
+    return SBuf(buf, length);
 }
 
 /// increments len to quickly cover [0, max] range, slowing down in risky areas

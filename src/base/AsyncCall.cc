@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -28,7 +28,23 @@ AsyncCall::AsyncCall(int aDebugSection, int aDebugLevel,
 
 AsyncCall::~AsyncCall()
 {
-    assert(!theNext); // AsyncCallQueue must clean
+   //assert(!theNext); // AsyncCallQueue must clean
+    //Titan start
+   debugs(debugSection, debugLevel, HERE << dump());
+   while (theNext!=NULL) {
+      //cleanup the queue
+      AsyncCall::Pointer call = theNext;
+      theNext = call->Next();
+      call->setNext(NULL);
+      try{
+          //!call->canceled() && call->cancel("AsyncCall::~AsyncCall");
+          debugs(debugSection, DBG_CRITICAL, HERE << "::{theNext call is not empty}::" << call->dump());
+          (void)(!call->canceled() && ScheduleCallHere(call));
+      }catch(...){      /*std::abort is called if destructors throw*/
+         call->cancel("AsyncCall::~AsyncCall::Exception");
+      }
+  };
+  //Titan end
 }
 
 void
@@ -74,6 +90,12 @@ AsyncCall::print(std::ostream &os)
         dialer->print(os);
     else
         os << "(?" << this << "?)";
+}
+
+std::string AsyncCall::dump(void){
+   std::stringstream    _ss;
+   _ss<<this;
+   return _ss.str();
 }
 
 void

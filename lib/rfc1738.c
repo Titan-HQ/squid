@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -53,12 +53,12 @@ static char rfc1738_reserved_chars[] = {
  *  compliant, escaped version of the given url.
  */
 char *
-rfc1738_do_escape(const char *url, int flags)
+rfc1738_do_escape(const char *const url, const int flags)
 {
-    static char *buf;
+    static char *buf=NULL;
     static size_t bufsize = 0;
-    const char *src;
-    char *dst;
+    const char *src=NULL;
+    char *dst=NULL;
     unsigned int i, do_escape;
 
     if (buf == NULL || strlen(url) * 3 > bufsize) {
@@ -127,7 +127,7 @@ rfc1738_do_escape(const char *url, int flags)
  * Converts a ascii hex code into a binary character.
  */
 static int
-fromhex(char ch)
+fromhex(const char ch)
 {
     if (ch >= '0' && ch <= '9')
         return ch - '0';
@@ -143,7 +143,7 @@ fromhex(char ch)
  *  given the string.  %% is a %. %ab is the 8-bit hexadecimal number "ab"
  */
 void
-rfc1738_unescape(char *s)
+rfc1738_unescape(char * const s)
 {
     int i, j;           /* i is write, j is read */
     for (i = j = 0; s[j]; i++, j++) {

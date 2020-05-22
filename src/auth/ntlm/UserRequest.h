@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -9,10 +9,9 @@
 #ifndef _SQUID_SRC_AUTH_NTLM_USERREQUEST_H
 #define _SQUID_SRC_AUTH_NTLM_USERREQUEST_H
 
-#if HAVE_AUTH_MODULE_NTLM
-
 #include "auth/UserRequest.h"
 #include "helper/forward.h"
+#include "MemPool.h"
 
 class ConnStateData;
 class HttpReply;
@@ -25,13 +24,14 @@ namespace Ntlm
 
 class UserRequest : public Auth::UserRequest
 {
-    MEMPROXY_CLASS(Auth::Ntlm::UserRequest);
 
 public:
+    MEMPROXY_CLASS(Auth::Ntlm::UserRequest);
+
     UserRequest();
     virtual ~UserRequest();
     virtual int authenticated() const;
-    virtual void authenticate(HttpRequest * request, ConnStateData * conn, Http::HdrType type);
+    virtual void authenticate(HttpRequest * request, ConnStateData * conn, http_hdr_type type);
     virtual Auth::Direction module_direction();
     virtual void startHelperLookup(HttpRequest *req, AccessLogEntry::Pointer &al, AUTHCB *, void *);
     virtual const char *credentialsStr();
@@ -61,6 +61,7 @@ private:
 } // namespace Ntlm
 } // namespace Auth
 
-#endif /* HAVE_AUTH_MODULE_NTLM */
+MEMPROXY_CLASS_INLINE(Auth::Ntlm::UserRequest);
+
 #endif /* _SQUID_SRC_AUTH_NTLM_USERREQUEST_H */
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -11,15 +11,20 @@
 #include "squid.h"
 #include "acl/IntRange.h"
 #include "cache_cf.h"
-#include "ConfigParser.h"
 #include "Debug.h"
-#include "fatal.h"
 #include "Parsing.h"
+
+/* explicit instantiation required for some systems */
+/** \cond AUTODOCS_IGNORE */
+template cbdata_type CbDataList< Range<int> >::CBDATA_CbDataList;
+/** \endcond */
 
 void
 ACLIntRange::parse()
 {
-    while (char *a = ConfigParser::strtokFile()) {
+    char *a;
+
+    while ((a = strtokFile())) {
         char *b = strchr(a, '-');
         unsigned short port1, port2;
 
@@ -36,7 +41,9 @@ ACLIntRange::parse()
             port2 = port1;
 
         if (port2 >= port1) {
-            RangeType temp(port1, port2+1);
+            RangeType temp (0,0);
+            temp.start = port1;
+            temp.end = port2+1;
             ranges.push_back(temp);
         } else {
             debugs(28, DBG_CRITICAL, "ACLIntRange::parse: Invalid port value");
@@ -54,9 +61,13 @@ ACLIntRange::empty() const
 bool
 ACLIntRange::match(int i)
 {
-    RangeType const toFind(i, i+1);
-    for (const auto &element : ranges) {
-        RangeType result = element.intersection(toFind);
+    RangeType const toFind (i, i+1);
+    CbDataListIterator<RangeType> iter(ranges);
+
+    while (!iter.end()) {
+        const RangeType & element = iter.next();
+        RangeType result = element.intersection (toFind);
+
         if (result.size())
             return true;
     }
@@ -70,7 +81,7 @@ ACLIntRange::clone() const
     if (!ranges.empty())
         fatal("ACLIntRange::clone: attempt to clone used ACL");
 
-    return new ACLIntRange(*this);
+    return new ACLIntRange (*this);
 }
 
 ACLIntRange::~ACLIntRange()
@@ -80,8 +91,11 @@ SBufList
 ACLIntRange::dump() const
 {
     SBufList sl;
-    for (const auto &element : ranges) {
+    CbDataListIterator<RangeType> iter(ranges);
+
+    while (!iter.end()) {
         SBuf sb;
+        const RangeType & element = iter.next();
 
         if (element.size() == 1)
             sb.Printf("%d", element.start);

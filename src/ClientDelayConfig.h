@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -10,7 +10,6 @@
 #define SQUID_CLIENTDELAYCONFIG_H
 
 #include "acl/forward.h"
-#include "base/RefCount.h"
 
 #include <vector>
 
@@ -20,35 +19,18 @@ class ConfigParser;
 /// \ingroup DelayPoolsAPI
 
 /* represents one client write limiting delay 'pool' */
-class ClientDelayPool : public RefCountable
+class ClientDelayPool
 {
 public:
-    typedef RefCount<ClientDelayPool> Pointer;
-
     ClientDelayPool()
-        :   access(nullptr), rate(0), highwatermark(0) {}
-    ~ClientDelayPool();
-    ClientDelayPool(const ClientDelayPool &) = delete;
-    ClientDelayPool &operator=(const ClientDelayPool &) = delete;
-
+        :   access(NULL), rate(0), highwatermark(0) {}
     void dump (StoreEntry * entry, unsigned int poolNumberMinusOne) const;
     acl_access *access;
     int rate;
     int64_t highwatermark;
 };
 
-class ClientDelayPools
-{
-public:
-    ClientDelayPools(const ClientDelayPools &) = delete;
-    ClientDelayPools &operator=(const ClientDelayPools &) = delete;
-    static ClientDelayPools *Instance();
-
-    std::vector<ClientDelayPool::Pointer> pools;
-private:
-    ClientDelayPools() {}
-    ~ClientDelayPools();
-};
+typedef std::vector<ClientDelayPool> ClientDelayPools;
 
 /* represents configuration of client write limiting delay pools */
 class ClientDelayConfig
@@ -56,10 +38,7 @@ class ClientDelayConfig
 public:
     ClientDelayConfig()
         :   initial(50) {}
-    ClientDelayConfig(const ClientDelayConfig &) = delete;
-    ClientDelayConfig &operator=(const ClientDelayConfig &) = delete;
-
-    void freePools();
+    void freePoolCount();
     void dumpPoolCount(StoreEntry * entry, const char *name) const;
     /* parsing of client_delay_pools - number of pools */
     void parsePoolCount();
@@ -72,11 +51,9 @@ public:
 
     /* initial bucket level, how fill bucket at startup */
     unsigned short initial;
-
+    ClientDelayPools pools;
 private:
-    unsigned short parsePoolId();
-    std::vector<ClientDelayPool::Pointer> &pools() { return ClientDelayPools::Instance()->pools; }
-    ClientDelayPool &pool(const int i) { return *(ClientDelayPools::Instance()->pools.at(i)); }
+    void clean();
 };
 
 #endif // SQUID_CLIENTDELAYCONFIG_H

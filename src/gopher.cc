@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -19,9 +19,9 @@
 #include "html_quote.h"
 #include "HttpReply.h"
 #include "HttpRequest.h"
+#include "Mem.h"
 #include "MemBuf.h"
 #include "mime.h"
-#include "parser/Tokenizer.h"
 #include "rfc1738.h"
 #include "SquidConfig.h"
 #include "SquidTime.h"
@@ -34,76 +34,75 @@
 #include "MemObject.h"
 #endif
 
-/* gopher type code from rfc. Anawat. */
-#define GOPHER_FILE         '0'
-#define GOPHER_DIRECTORY    '1'
-#define GOPHER_CSO          '2'
-#define GOPHER_ERROR        '3'
-#define GOPHER_MACBINHEX    '4'
-#define GOPHER_DOSBIN       '5'
-#define GOPHER_UUENCODED    '6'
-#define GOPHER_INDEX        '7'
-#define GOPHER_TELNET       '8'
-#define GOPHER_BIN          '9'
-#define GOPHER_REDUNT       '+'
-#define GOPHER_3270         'T'
-#define GOPHER_GIF          'g'
-#define GOPHER_IMAGE        'I'
-
-#define GOPHER_HTML         'h'
-#define GOPHER_INFO         'i'
-
-///  W3 address
-#define GOPHER_WWW          'w'
-#define GOPHER_SOUND        's'
-
-#define GOPHER_PLUS_IMAGE   ':'
-#define GOPHER_PLUS_MOVIE   ';'
-#define GOPHER_PLUS_SOUND   '<'
-
-#define GOPHER_PORT         70
-
-#define TAB                 '\t'
-
-// TODO CODE: should this be a protocol-specific thing?
-#define TEMP_BUF_SIZE       4096
-
-#define MAX_CSO_RESULT      1024
-
 /**
- * Gopher Gateway Internals
- *
+ \defgroup ServerProtocolGopherInternal Server-Side Gopher Internals
+ \ingroup ServerProtocolGopherAPI
  * Gopher is somewhat complex and gross because it must convert from
  * the Gopher protocol to HTTP.
  */
-class GopherStateData
-{
-    CBDATA_CLASS(GopherStateData);
 
-public:
-    GopherStateData(FwdState *aFwd) :
-        entry(aFwd->entry),
-        conversion(NORMAL),
-        HTML_header_added(0),
-        HTML_pre(0),
-        type_id(GOPHER_FILE /* '0' */),
-        cso_recno(0),
-        len(0),
-        buf(NULL),
-        fwd(aFwd)
-    {
-        *request = 0;
-        buf = (char *)memAllocate(MEM_4K_BUF);
-        entry->lock("gopherState");
-        *replybuf = 0;
-    }
-    ~GopherStateData() {if(buf) swanSong();}
+/* gopher type code from rfc. Anawat. */
+/// \ingroup ServerProtocolGopherInternal
+#define GOPHER_FILE         '0'
+/// \ingroup ServerProtocolGopherInternal
+#define GOPHER_DIRECTORY    '1'
+/// \ingroup ServerProtocolGopherInternal
+#define GOPHER_CSO          '2'
+/// \ingroup ServerProtocolGopherInternal
+#define GOPHER_ERROR        '3'
+/// \ingroup ServerProtocolGopherInternal
+#define GOPHER_MACBINHEX    '4'
+/// \ingroup ServerProtocolGopherInternal
+#define GOPHER_DOSBIN       '5'
+/// \ingroup ServerProtocolGopherInternal
+#define GOPHER_UUENCODED    '6'
+/// \ingroup ServerProtocolGopherInternal
+#define GOPHER_INDEX        '7'
+/// \ingroup ServerProtocolGopherInternal
+#define GOPHER_TELNET       '8'
+/// \ingroup ServerProtocolGopherInternal
+#define GOPHER_BIN          '9'
+/// \ingroup ServerProtocolGopherInternal
+#define GOPHER_REDUNT       '+'
+/// \ingroup ServerProtocolGopherInternal
+#define GOPHER_3270         'T'
+/// \ingroup ServerProtocolGopherInternal
+#define GOPHER_GIF          'g'
+/// \ingroup ServerProtocolGopherInternal
+#define GOPHER_IMAGE        'I'
 
-    /* AsyncJob API emulated */
-    void deleteThis(const char *aReason);
-    void swanSong();
+/// \ingroup ServerProtocolGopherInternal
+#define GOPHER_HTML         'h' /* HTML */
+/// \ingroup ServerProtocolGopherInternal
+#define GOPHER_INFO         'i'
+/**
+  \ingroup ServerProtocolGopherInternal
+  W3 address
+ */
+#define GOPHER_WWW          'w'
+/// \ingroup ServerProtocolGopherInternal
+#define GOPHER_SOUND        's'
 
-public:
+/// \ingroup ServerProtocolGopherInternal
+#define GOPHER_PLUS_IMAGE   ':'
+/// \ingroup ServerProtocolGopherInternal
+#define GOPHER_PLUS_MOVIE   ';'
+/// \ingroup ServerProtocolGopherInternal
+#define GOPHER_PLUS_SOUND   '<'
+
+/// \ingroup ServerProtocolGopherInternal
+#define GOPHER_PORT         70
+
+/// \ingroup ServerProtocolGopherInternal
+#define TAB                 '\t'
+/// \ingroup ServerProtocolGopherInternal
+/// \todo CODE: should this be a protocol-specific thing?
+#define TEMP_BUF_SIZE       4096
+/// \ingroup ServerProtocolGopherInternal
+#define MAX_CSO_RESULT      1024
+
+/// \ingroup ServerProtocolGopherInternal
+typedef struct gopher_ds {
     StoreEntry *entry;
     enum {
         NORMAL,
@@ -121,12 +120,10 @@ public:
     int len;
     char *buf;          /* pts to a 4k page */
     Comm::ConnectionPointer serverConn;
+    HttpRequest *req;
     FwdState::Pointer fwd;
-    HttpReply::Pointer reply_;
     char replybuf[BUFSIZ];
-};
-
-CBDATA_CLASS_INIT(GopherStateData);
+} GopherStateData;
 
 static CLCB gopherStateFree;
 static void gopherMimeCreate(GopherStateData *);
@@ -140,10 +137,13 @@ static IOCB gopherReadReply;
 static IOCB gopherSendComplete;
 static PF gopherSendRequest;
 
+/// \ingroup ServerProtocolGopherInternal
 static char def_gopher_bin[] = "www/unknown";
 
+/// \ingroup ServerProtocolGopherInternal
 static char def_gopher_text[] = "text/plain";
 
+/// \ingroup ServerProtocolGopherInternal
 static void
 gopherStateFree(const CommCloseCbParams &params)
 {
@@ -152,29 +152,21 @@ gopherStateFree(const CommCloseCbParams &params)
     if (gopherState == NULL)
         return;
 
-    gopherState->deleteThis("gopherStateFree");
-}
-
-void
-GopherStateData::deleteThis(const char *)
-{
-    swanSong();
-    delete this;
-}
-
-void
-GopherStateData::swanSong()
-{
-    if (entry)
-        entry->unlock("gopherState");
-
-    if (buf) {
-        memFree(buf, MEM_4K_BUF);
-        buf = nullptr;
+    if (gopherState->entry) {
+        gopherState->entry->unlock("gopherState");
     }
+
+    HTTPMSGUNLOCK(gopherState->req);
+
+    gopherState->fwd = NULL;    // refcounted
+
+    memFree(gopherState->buf, MEM_4K_BUF);
+    gopherState->buf = NULL;
+    cbdataFree(gopherState);
 }
 
 /**
+ \ingroup ServerProtocolGopherInternal
  * Create MIME Header for Gopher Data
  */
 static void
@@ -241,54 +233,53 @@ gopherMimeCreate(GopherStateData * gopherState)
     }
 
     assert(entry->isEmpty());
+    EBIT_CLR(entry->flags, ENTRY_FWD_HDR_WAIT);
 
     HttpReply *reply = new HttpReply;
     entry->buffer();
     reply->setHeaders(Http::scOkay, "Gatewaying", mime_type, -1, -1, -2);
     if (mime_enc)
-        reply->header.putStr(Http::HdrType::CONTENT_ENCODING, mime_enc);
+        reply->header.putStr(HDR_CONTENT_ENCODING, mime_enc);
 
     entry->replaceHttpReply(reply);
-    gopherState->reply_ = reply;
 }
 
 /**
+ \ingroup ServerProtocolGopherInternal
  * Parse a gopher request into components.  By Anawat.
  */
 static void
 gopher_request_parse(const HttpRequest * req, char *type_id, char *request)
 {
-    ::Parser::Tokenizer tok(req->url.path());
+    const char *path = req->urlpath.termedBuf();
 
     if (request)
-        *request = 0;
+        request[0] = '\0';
 
-    tok.skip('/'); // ignore failures? path could be ab-empty
+    if (path && (*path == '/'))
+        ++path;
 
-    if (tok.atEnd()) {
+    if (!path || !*path) {
         *type_id = GOPHER_DIRECTORY;
         return;
     }
 
-    static const CharacterSet anyByte("UTF-8",0x00, 0xFF);
-
-    SBuf typeId;
-    (void)tok.prefix(typeId, anyByte, 1); // never fails since !atEnd()
-    *type_id = typeId[0];
+    *type_id = path[0];
 
     if (request) {
-        SBufToCstring(request, tok.remaining().substr(0, MAX_URL-1));
+        xstrncpy(request, path + 1, MAX_URL);
         /* convert %xx to char */
         rfc1738_unescape(request);
     }
 }
 
 /**
+ \ingroup ServerProtocolGopherAPI
  * Parse the request to determine whether it is cachable.
  *
- * \param req   Request data.
- * \retval 0    Not cachable.
- * \retval 1    Cachable.
+ \param req Request data.
+ \retval 0  Not cachable.
+ \retval 1  Cachable.
  */
 int
 gopherCachable(const HttpRequest * req)
@@ -319,6 +310,7 @@ gopherCachable(const HttpRequest * req)
     return cachable;
 }
 
+/// \ingroup ServerProtocolGopherInternal
 static void
 gopherHTMLHeader(StoreEntry * e, const char *title, const char *substring)
 {
@@ -332,6 +324,7 @@ gopherHTMLHeader(StoreEntry * e, const char *title, const char *substring)
     storeAppendPrintf(e, "</H1>\n");
 }
 
+/// \ingroup ServerProtocolGopherInternal
 static void
 gopherHTMLFooter(StoreEntry * e)
 {
@@ -344,6 +337,7 @@ gopherHTMLFooter(StoreEntry * e)
     storeAppendPrintf(e, "</ADDRESS></BODY></HTML>\n");
 }
 
+/// \ingroup ServerProtocolGopherInternal
 static void
 gopherEndHTML(GopherStateData * gopherState)
 {
@@ -360,8 +354,9 @@ gopherEndHTML(GopherStateData * gopherState)
 }
 
 /**
+ \ingroup ServerProtocolGopherInternal
  * Convert Gopher to HTML.
- *
+ \par
  * Borrow part of code from libwww2 came with Mosaic distribution.
  */
 static void
@@ -386,7 +381,7 @@ gopherToHTML(GopherStateData * gopherState, char *inbuf, int len)
 
     entry = gopherState->entry;
 
-    if (gopherState->conversion == GopherStateData::HTML_INDEX_PAGE) {
+    if (gopherState->conversion == gopher_ds::HTML_INDEX_PAGE) {
         char *html_url = html_quote(entry->url());
         gopherHTMLHeader(entry, "Gopher Index %s", html_url);
         storeAppendPrintf(entry,
@@ -401,7 +396,7 @@ gopherToHTML(GopherStateData * gopherState, char *inbuf, int len)
         return;
     }
 
-    if (gopherState->conversion == GopherStateData::HTML_CSO_PAGE) {
+    if (gopherState->conversion == gopher_ds::HTML_CSO_PAGE) {
         char *html_url = html_quote(entry->url());
         gopherHTMLHeader(entry, "CSO Search of %s", html_url);
         storeAppendPrintf(entry,
@@ -419,7 +414,7 @@ gopherToHTML(GopherStateData * gopherState, char *inbuf, int len)
     String outbuf;
 
     if (!gopherState->HTML_header_added) {
-        if (gopherState->conversion == GopherStateData::HTML_CSO_RESULT)
+        if (gopherState->conversion == gopher_ds::HTML_CSO_RESULT)
             gopherHTMLHeader(entry, "CSO Search Result", NULL);
         else
             gopherHTMLHeader(entry, "Gopher Menu", NULL);
@@ -476,9 +471,9 @@ gopherToHTML(GopherStateData * gopherState, char *inbuf, int len)
 
         switch (gopherState->conversion) {
 
-        case GopherStateData::HTML_INDEX_RESULT:
+        case gopher_ds::HTML_INDEX_RESULT:
 
-        case GopherStateData::HTML_DIR: {
+        case gopher_ds::HTML_DIR: {
             tline = line;
             gtype = *tline;
             ++tline;
@@ -623,7 +618,7 @@ gopherToHTML(GopherStateData * gopherState, char *inbuf, int len)
             break;
             }           /* HTML_DIR, HTML_INDEX_RESULT */
 
-        case GopherStateData::HTML_CSO_RESULT: {
+        case gopher_ds::HTML_CSO_RESULT: {
             if (line[0] == '-') {
                 int code, recno;
                 char *s_code, *s_recno, *result;
@@ -704,6 +699,7 @@ gopherToHTML(GopherStateData * gopherState, char *inbuf, int len)
     return;
 }
 
+/// \ingroup ServerProtocolGopherInternal
 static void
 gopherTimeout(const CommTimeoutCbParams &io)
 {
@@ -717,6 +713,7 @@ gopherTimeout(const CommTimeoutCbParams &io)
 }
 
 /**
+ \ingroup ServerProtocolGopherInternal
  * This will be called when data is ready to be read from fd.
  * Read until error or connection closed.
  */
@@ -756,8 +753,8 @@ gopherReadReply(const Comm::ConnectionPointer &conn, char *buf, size_t len, Comm
         delayId.bytesIn(len);
 #endif
 
-        statCounter.server.all.kbytes_in += len;
-        statCounter.server.other.kbytes_in += len;
+        kb_incr(&(statCounter.server.all.kbytes_in), len);
+        kb_incr(&(statCounter.server.other.kbytes_in), len);
     }
 
     debugs(10, 5, HERE << conn << " read len=" << len);
@@ -773,17 +770,14 @@ gopherReadReply(const Comm::ConnectionPointer &conn, char *buf, size_t len, Comm
         ++IOStats.Gopher.read_hist[bin];
 
         HttpRequest *req = gopherState->fwd->request;
-        if (req->hier.bodyBytesRead < 0) {
+        if (req->hier.bodyBytesRead < 0)
             req->hier.bodyBytesRead = 0;
-            // first bytes read, update Reply flags:
-            gopherState->reply_->sources |= Http::Message::srcGopher;
-        }
 
         req->hier.bodyBytesRead += len;
     }
 
     if (flag != Comm::OK) {
-        debugs(50, DBG_IMPORTANT, MYNAME << "error reading: " << xstrerr(xerrno));
+        debugs(50, DBG_IMPORTANT, "gopherReadReply: error reading: " << xstrerror());
 
         if (ignoreErrno(xerrno)) {
             AsyncCall::Pointer call = commCbCall(5,4, "gopherReadReply",
@@ -802,7 +796,7 @@ gopherReadReply(const Comm::ConnectionPointer &conn, char *buf, size_t len, Comm
         /* Connection closed; retrieval done. */
         /* flush the rest of data in temp buf if there is one. */
 
-        if (gopherState->conversion != GopherStateData::NORMAL)
+        if (gopherState->conversion != gopher_ds::NORMAL)
             gopherEndHTML(gopherState);
 
         entry->timestampsSet();
@@ -810,7 +804,7 @@ gopherReadReply(const Comm::ConnectionPointer &conn, char *buf, size_t len, Comm
         gopherState->fwd->complete();
         gopherState->serverConn->close();
     } else {
-        if (gopherState->conversion != GopherStateData::NORMAL) {
+        if (gopherState->conversion != gopher_ds::NORMAL) {
             gopherToHTML(gopherState, buf, len);
         } else {
             entry->append(buf, len);
@@ -822,6 +816,7 @@ gopherReadReply(const Comm::ConnectionPointer &conn, char *buf, size_t len, Comm
 }
 
 /**
+ \ingroup ServerProtocolGopherInternal
  * This will be called when request write is complete. Schedule read of reply.
  */
 static void
@@ -833,15 +828,15 @@ gopherSendComplete(const Comm::ConnectionPointer &conn, char *, size_t size, Com
 
     if (size > 0) {
         fd_bytes(conn->fd, size, FD_WRITE);
-        statCounter.server.all.kbytes_out += size;
-        statCounter.server.other.kbytes_out += size;
+        kb_incr(&(statCounter.server.all.kbytes_out), size);
+        kb_incr(&(statCounter.server.other.kbytes_out), size);
     }
 
     if (errflag) {
         ErrorState *err;
         err = new ErrorState(ERR_WRITE_ERROR, Http::scServiceUnavailable, gopherState->fwd->request);
         err->xerrno = xerrno;
-        err->port = gopherState->fwd->request->url.port();
+        err->port = gopherState->fwd->request->port;
         err->url = xstrdup(entry->url());
         gopherState->fwd->fail(err);
         gopherState->serverConn->close();
@@ -860,25 +855,25 @@ gopherSendComplete(const Comm::ConnectionPointer &conn, char *, size_t size, Com
 
     case GOPHER_DIRECTORY:
         /* we got to convert it first */
-        gopherState->conversion = GopherStateData::HTML_DIR;
+        gopherState->conversion = gopher_ds::HTML_DIR;
         gopherState->HTML_header_added = 0;
         break;
 
     case GOPHER_INDEX:
         /* we got to convert it first */
-        gopherState->conversion = GopherStateData::HTML_INDEX_RESULT;
+        gopherState->conversion = gopher_ds::HTML_INDEX_RESULT;
         gopherState->HTML_header_added = 0;
         break;
 
     case GOPHER_CSO:
         /* we got to convert it first */
-        gopherState->conversion = GopherStateData::HTML_CSO_RESULT;
+        gopherState->conversion = gopher_ds::HTML_CSO_RESULT;
         gopherState->cso_recno = 0;
         gopherState->HTML_header_added = 0;
         break;
 
     default:
-        gopherState->conversion = GopherStateData::NORMAL;
+        gopherState->conversion = gopher_ds::NORMAL;
         entry->flush();
     }
 
@@ -889,10 +884,11 @@ gopherSendComplete(const Comm::ConnectionPointer &conn, char *, size_t size, Com
 }
 
 /**
+ \ingroup ServerProtocolGopherInternal
  * This will be called when connect completes. Write request.
  */
 static void
-gopherSendRequest(int, void *data)
+gopherSendRequest(int fd, void *data)
 {
     GopherStateData *gopherState = (GopherStateData *)data;
     MemBuf mb;
@@ -901,36 +897,48 @@ gopherSendRequest(int, void *data)
     if (gopherState->type_id == GOPHER_CSO) {
         const char *t = strchr(gopherState->request, '?');
 
-        if (t)
+        if ( t )
             ++t;        /* skip the ? */
         else
             t = "";
 
-        mb.appendf("query %s\r\nquit", t);
+        mb.Printf("query %s\r\nquit", t);
     } else {
         if (gopherState->type_id == GOPHER_INDEX) {
-            if (char *t = strchr(gopherState->request, '?'))
+            if( char *t = strchr(gopherState->request, '?') )
                 *t = '\t';
-        }
         mb.append(gopherState->request, strlen(gopherState->request));
+        }
     }
     mb.append("\r\n", 2);
 
     debugs(10, 5, gopherState->serverConn);
     AsyncCall::Pointer call = commCbCall(5,5, "gopherSendComplete",
                                          CommIoCbPtrFun(gopherSendComplete, gopherState));
-    Comm::Write(gopherState->serverConn, &mb, call);
+    Comm::Write( gopherState->serverConn, &mb, call );
 
-    if (!gopherState->entry->makePublic())
-        gopherState->entry->makePrivate(true);
+    gopherState->entry->makePublic();
 }
 
+/// \ingroup ServerProtocolGopherInternal
+CBDATA_TYPE(GopherStateData);
+
+/// \ingroup ServerProtocolGopherAPI
 void
 gopherStart(FwdState * fwd)
 {
-    GopherStateData *gopherState = new GopherStateData(fwd);
+    StoreEntry *entry = fwd->entry;
+    GopherStateData *gopherState;
+    CBDATA_INIT_TYPE(GopherStateData);
+    gopherState = cbdataAlloc(GopherStateData);
+    gopherState->buf = (char *)memAllocate(MEM_4K_BUF);
 
-    debugs(10, 3, gopherState->entry->url());
+    entry->lock("gopherState");
+    gopherState->entry = entry;
+
+    gopherState->fwd = fwd;
+
+    debugs(10, 3, "gopherStart: " << entry->url()  );
 
     ++ statCounter.server.all.requests;
 
@@ -949,12 +957,12 @@ gopherStart(FwdState * fwd)
         gopherMimeCreate(gopherState);
 
         if (gopherState->type_id == GOPHER_INDEX) {
-            gopherState->conversion = GopherStateData::HTML_INDEX_PAGE;
+            gopherState->conversion = gopher_ds::HTML_INDEX_PAGE;
         } else {
             if (gopherState->type_id == GOPHER_CSO) {
-                gopherState->conversion = GopherStateData::HTML_CSO_PAGE;
+                gopherState->conversion = gopher_ds::HTML_CSO_PAGE;
             } else {
-                gopherState->conversion = GopherStateData::HTML_INDEX_PAGE;
+                gopherState->conversion = gopher_ds::HTML_INDEX_PAGE;
             }
         }
 

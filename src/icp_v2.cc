@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -39,28 +39,16 @@
 #include "StatCounters.h"
 #include "Store.h"
 #include "store_key_md5.h"
+#include "SwapDir.h"
 #include "tools.h"
 #include "wordlist.h"
 
-// for tvSubUsec() which should be in SquidTime.h
-#include "util.h"
-
 #include <cerrno>
-
-/// a delayed icpUdpSend() call
-class DelayedUdpSend {
-public:
-    Ip::Address address; ///< remote peer (which may not be a cache_peer)
-    icp_common_t *msg = nullptr; ///< ICP message with network byte order fields
-    DelayedUdpSend *next = nullptr; ///< invasive FIFO queue of delayed ICP messages
-    AccessLogEntryPointer ale; ///< sender's master transaction summary
-    struct timeval queue_time = {0, 0}; ///< queuing timestamp
-};
 
 static void icpIncomingConnectionOpened(const Comm::ConnectionPointer &conn, int errNo);
 
 /// \ingroup ServerProtocolICPInternal2
-static void icpLogIcp(const Ip::Address &, const LogTags_ot, int, const char *, const int, AccessLogEntryPointer &);
+static void icpLogIcp(const Ip::Address &, LogTags, int, const char *, int);
 
 /// \ingroup ServerProtocolICPInternal2
 static void icpHandleIcpV2(int, Ip::Address &, char *, int);
@@ -68,35 +56,14 @@ static void icpHandleIcpV2(int, Ip::Address &, char *, int);
 /// \ingroup ServerProtocolICPInternal2
 static void icpCount(void *, int, size_t, int);
 
-static LogTags_ot icpLogFromICPCode(icp_opcode);
-
-static int icpUdpSend(int fd, const Ip::Address &to, icp_common_t * msg, int delay, AccessLogEntryPointer al);
-
-static void
-icpSyncAle(AccessLogEntryPointer &al, const Ip::Address &caddr, const char *url, int len, int delay)
-{
-    if (!al)
-        al = new AccessLogEntry();
-    al->icp.opcode = ICP_QUERY;
-    al->cache.caddr = caddr;
-    al->url = url;
-    al->setVirginUrlForMissingRequest(al->url);
-    // XXX: move to use icp.clientReply instead
-    al->http.clientReplySz.payloadData = len;
-    al->cache.start_time = current_time;
-    al->cache.start_time.tv_sec -= delay;
-    al->cache.trTime.tv_sec = delay;
-    al->cache.trTime.tv_usec = 0;
-}
-
 /**
  \ingroup ServerProtocolICPInternal2
  * IcpQueueHead is global so comm_incoming() knows whether or not
  * to call icpUdpSendQueue.
  */
-static DelayedUdpSend *IcpQueueHead = NULL;
+static icpUdpData *IcpQueueHead = NULL;
 /// \ingroup ServerProtocolICPInternal2
-static DelayedUdpSend *IcpQueueTail = NULL;
+static icpUdpData *IcpQueueTail = NULL;
 
 /// \ingroup ServerProtocolICPInternal2
 Comm::ConnectionPointer icpIncomingConn = NULL;
@@ -104,15 +71,15 @@ Comm::ConnectionPointer icpIncomingConn = NULL;
 Comm::ConnectionPointer icpOutgoingConn = NULL;
 
 /* icp_common_t */
-icp_common_t::icp_common_t() :
+_icp_common_t::_icp_common_t() :
     opcode(ICP_INVALID), version(0), length(0), reqnum(0),
     flags(0), pad(0), shostid(0)
 {}
 
-icp_common_t::icp_common_t(char *buf, unsigned int len) :
+_icp_common_t::_icp_common_t(char *buf, unsigned int len) :
     opcode(ICP_INVALID), version(0), reqnum(0), flags(0), pad(0), shostid(0)
 {
-    if (len < sizeof(icp_common_t)) {
+    if (len < sizeof(_icp_common_t)) {
         /* mark as invalid */
         length = len + 1;
         return;
@@ -129,12 +96,12 @@ icp_common_t::icp_common_t(char *buf, unsigned int len) :
 }
 
 icp_opcode
-icp_common_t::getOpCode() const
+_icp_common_t::getOpCode() const
 {
-    if (opcode > static_cast<char>(icp_opcode::ICP_END))
+    if (opcode > (char)ICP_END)
         return ICP_INVALID;
 
-    return static_cast<icp_opcode>(opcode);
+    return (icp_opcode)opcode;
 }
 
 /* ICPState */
@@ -154,44 +121,12 @@ ICPState::~ICPState()
     HTTPMSGUNLOCK(request);
 }
 
-bool
-ICPState::confirmAndPrepHit(const StoreEntry &e)
-{
-    if (!e.validToSend())
-        return false;
-
-    if (!Config.onoff.icp_hit_stale && refreshCheckICP(&e, request))
-        return false;
-
-    if (e.hittingRequiresCollapsing() && !startCollapsingOn(e, false))
-        return false;
-
-    return true;
-}
-
-LogTags *
-ICPState::loggingTags()
-{
-    // calling icpSyncAle(LOG_TAG_NONE) here would not change cache.code
-    if (!al)
-        al = new AccessLogEntry();
-    return &al->cache.code;
-}
-
-void
-ICPState::fillChecklist(ACLFilledChecklist &checklist) const
-{
-    checklist.setRequest(request);
-    icpSyncAle(al, from, url, 0, 0);
-    checklist.al = al;
-}
-
 /* End ICPState */
 
 /* ICP2State */
 
 /// \ingroup ServerProtocolICPInternal2
-class ICP2State: public ICPState
+class ICP2State : public ICPState, public StoreClient
 {
 
 public:
@@ -199,7 +134,7 @@ public:
         ICPState(aHeader, aRequest),rtt(0),src_rtt(0),flags(0) {}
 
     ~ICP2State();
-    virtual void created(StoreEntry * newEntry) override;
+    void created(StoreEntry * newEntry);
 
     int rtt;
     int src_rtt;
@@ -210,18 +145,19 @@ ICP2State::~ICP2State()
 {}
 
 void
-ICP2State::created(StoreEntry *e)
+ICP2State::created(StoreEntry *newEntry)
 {
+    StoreEntry *entry = newEntry->isNull () ? NULL : newEntry;
     debugs(12, 5, "icpHandleIcpV2: OPCODE " << icp_opcode_str[header.opcode]);
     icp_opcode codeToSend;
 
-    if (e && confirmAndPrepHit(*e)) {
+    if (icpCheckUdpHit(entry, request)) {
         codeToSend = ICP_HIT;
     } else {
 #if USE_ICMP
         if (Config.onoff.test_reachability && rtt == 0) {
-            if ((rtt = netdbHostRtt(request->url.host())) == 0)
-                netdbPingSite(request->url.host());
+            if ((rtt = netdbHostRtt(request->GetHost())) == 0)
+                netdbPingSite(request->GetHost());
         }
 #endif /* USE_ICMP */
 
@@ -233,66 +169,65 @@ ICP2State::created(StoreEntry *e)
             codeToSend = ICP_MISS;
     }
 
-    icpCreateAndSend(codeToSend, flags, url, header.reqnum, src_rtt, fd, from, al);
-
-    // TODO: StoreClients must either store/lock or abandon found entries.
-    //if (e)
-    //    e->abandon();
-
+    icpCreateAndSend(codeToSend, flags, url, header.reqnum, src_rtt, fd, from);
     delete this;
 }
 
 /* End ICP2State */
 
-/// updates ALE (if any) and logs the transaction (if needed)
+/// \ingroup ServerProtocolICPInternal2
 static void
-icpLogIcp(const Ip::Address &caddr, const LogTags_ot logcode, const int len, const char *url, int delay, AccessLogEntry::Pointer &al)
+icpLogIcp(const Ip::Address &caddr, LogTags logcode, int len, const char *url, int delay)
 {
-    assert(logcode != LOG_TAG_NONE);
+    AccessLogEntry::Pointer al = new AccessLogEntry();
 
-    // Optimization: No premature (ALE creation in) icpSyncAle().
-    if (al) {
-        icpSyncAle(al, caddr, url, len, delay);
-        al->cache.code.update(logcode);
-    }
-
-    if (logcode == LOG_ICP_QUERY)
-        return; // we never log queries
-
-    if (!Config.onoff.log_udp) {
-        clientdbUpdate(caddr, al ? al->cache.code : LogTags(logcode), AnyP::PROTO_ICP, len);
+    if (LOG_TAG_NONE == logcode)
         return;
-    }
 
-    if (!al) {
-        // The above attempt to optimize ALE creation has failed. We do need it.
-        icpSyncAle(al, caddr, url, len, delay);
-        al->cache.code.update(logcode);
-    }
-    clientdbUpdate(caddr, al->cache.code, AnyP::PROTO_ICP, len);
+    if (LOG_ICP_QUERY == logcode)
+        return;
+
+    clientdbUpdate(caddr, logcode, AnyP::PROTO_ICP, len);
+
+    if (!Config.onoff.log_udp)
+        return;
+
+    al->icp.opcode = ICP_QUERY;
+
+    al->url = url;
+
+    al->cache.caddr = caddr;
+
+    // XXX: move to use icp.clientReply instead
+    al->http.clientReplySz.payloadData = len;
+
+    al->cache.code = logcode;
+
+    al->cache.msec = delay;
+
     accessLogLog(al, NULL);
 }
 
 /// \ingroup ServerProtocolICPInternal2
 void
-icpUdpSendQueue(int fd, void *)
+icpUdpSendQueue(int fd, void *unused)
 {
-    DelayedUdpSend *q;
+    icpUdpData *q;
 
     while ((q = IcpQueueHead) != NULL) {
         int delay = tvSubUsec(q->queue_time, current_time);
         /* increment delay to prevent looping */
-        const int x = icpUdpSend(fd, q->address, q->msg, ++delay, q->ale);
+        const int x = icpUdpSend(fd, q->address, (icp_common_t *) q->msg, q->logcode, ++delay);
         IcpQueueHead = q->next;
-        delete q;
+        xfree(q);
 
         if (x < 0)
             break;
     }
 }
 
-icp_common_t *
-icp_common_t::CreateMessage(
+_icp_common_t *
+_icp_common_t::createMessage(
     icp_opcode opcode,
     int flags,
     const char *url,
@@ -336,16 +271,14 @@ icp_common_t::CreateMessage(
     return (icp_common_t *)buf;
 }
 
-// TODO: Move retries to icpCreateAndSend(); the other caller does not retry.
-/// writes the given UDP msg to the socket; queues a retry on the first failure
-/// \returns a negative number on failures
-static int
+int
 icpUdpSend(int fd,
            const Ip::Address &to,
            icp_common_t * msg,
-           int delay,
-           AccessLogEntryPointer al)
+           LogTags logcode,
+           int delay)
 {
+    icpUdpData *queue;
     int x;
     int len;
     len = (int) ntohs(msg->length);
@@ -356,17 +289,17 @@ icpUdpSend(int fd,
 
     if (x >= 0) {
         /* successfully written */
-        const auto logcode = icpLogFromICPCode(static_cast<icp_opcode>(msg->opcode));
-        icpLogIcp(to, logcode, len, (char *) (msg + 1), delay, al);
+        icpLogIcp(to, logcode, len, (char *) (msg + 1), delay);
         icpCount(msg, SENT, (size_t) len, delay);
         safe_free(msg);
     } else if (0 == delay) {
         /* send failed, but queue it */
-        const auto queue = new DelayedUdpSend();
+        queue = (icpUdpData *) xcalloc(1, sizeof(icpUdpData));
         queue->address = to;
         queue->msg = msg;
+        queue->len = (int) ntohs(msg->length);
         queue->queue_time = current_time;
-        queue->ale = al;
+        queue->logcode = logcode;
 
         if (IcpQueueHead == NULL) {
             IcpQueueHead = queue;
@@ -383,11 +316,28 @@ icpUdpSend(int fd,
         ++statCounter.icp.replies_queued;
     } else {
         /* don't queue it */
-        // XXX: safe_free(msg)
         ++statCounter.icp.replies_dropped;
     }
 
     return x;
+}
+
+int
+icpCheckUdpHit(StoreEntry * e, HttpRequest * request)
+{
+    if (e == NULL)
+        return 0;
+
+    if (!e->validToSend())
+        return 0;
+
+    if (Config.onoff.icp_hit_stale)
+        return 1;
+
+    if (refreshCheckICP(e, request))
+        return 0;
+
+    return 1;
 }
 
 /**
@@ -409,7 +359,7 @@ icpGetCommonOpcode()
     return ICP_ERR;
 }
 
-static LogTags_ot
+LogTags
 icpLogFromICPCode(icp_opcode opcode)
 {
     if (opcode == ICP_ERR)
@@ -427,25 +377,16 @@ icpLogFromICPCode(icp_opcode opcode)
     if (opcode == ICP_MISS_NOFETCH)
         return LOG_UDP_MISS_NOFETCH;
 
-    if (opcode == ICP_DECHO)
-        return LOG_ICP_QUERY;
-
-    if (opcode == ICP_QUERY)
-        return LOG_ICP_QUERY;
-
     fatal("expected ICP opcode\n");
 
     return LOG_UDP_INVALID;
 }
 
 void
-icpCreateAndSend(icp_opcode opcode, int flags, char const *url, int reqnum, int pad, int fd, const Ip::Address &from, AccessLogEntry::Pointer al)
+icpCreateAndSend(icp_opcode opcode, int flags, char const *url, int reqnum, int pad, int fd, const Ip::Address &from)
 {
-    // update potentially shared ALE ASAP; the ICP query itself may be delayed
-    if (al)
-        al->cache.code.update(icpLogFromICPCode(opcode));
-    icp_common_t *reply = icp_common_t::CreateMessage(opcode, flags, url, reqnum, pad);
-    icpUdpSend(fd, from, reply, 0, al);
+    icp_common_t *reply = _icp_common_t::createMessage(opcode, flags, url, reqnum, pad);
+    icpUdpSend(fd, from, reply, icpLogFromICPCode(opcode), 0);
 }
 
 void
@@ -458,9 +399,9 @@ icpDenyAccess(Ip::Address &from, char *url, int reqnum, int fd)
          * count this DENIED query in the clientdb, even though
          * we're not sending an ICP reply...
          */
-        clientdbUpdate(from, LogTags(LOG_UDP_DENIED), AnyP::PROTO_ICP, 0);
+        clientdbUpdate(from, LOG_UDP_DENIED, AnyP::PROTO_ICP, 0);
     } else {
-        icpCreateAndSend(ICP_DENIED, 0, url, reqnum, 0, fd, from, nullptr);
+        icpCreateAndSend(ICP_DENIED, 0, url, reqnum, 0, fd, from);
     }
 }
 
@@ -474,7 +415,7 @@ icpAccessAllowed(Ip::Address &from, HttpRequest * icp_request)
     ACLFilledChecklist checklist(Config.accessList.icp, icp_request, NULL);
     checklist.src_addr = from;
     checklist.my_addr.setNoAddr();
-    return checklist.fastCheck().allowed();
+    return (checklist.fastCheck() == ACCESS_ALLOWED);
 }
 
 char const *
@@ -491,14 +432,14 @@ icpGetRequest(char *url, int reqnum, int fd, Ip::Address &from)
 {
     if (strpbrk(url, w_space)) {
         url = rfc1738_escape(url);
-        icpCreateAndSend(ICP_ERR, 0, rfc1738_escape(url), reqnum, 0, fd, from, nullptr);
+        icpCreateAndSend(ICP_ERR, 0, rfc1738_escape(url), reqnum, 0, fd, from);
         return NULL;
     }
 
     HttpRequest *result;
-    const MasterXaction::Pointer mx = new MasterXaction(XactionInitiator::initIcp);
-    if ((result = HttpRequest::FromUrl(url, mx)) == NULL)
-        icpCreateAndSend(ICP_ERR, 0, url, reqnum, 0, fd, from, nullptr);
+
+    if ((result = HttpRequest::CreateFromUrl(url)) == NULL)
+        icpCreateAndSend(ICP_ERR, 0, url, reqnum, 0, fd, from);
 
     return result;
 
@@ -526,8 +467,8 @@ doV2Query(int fd, Ip::Address &from, char *buf, icp_common_t header)
     }
 #if USE_ICMP
     if (header.flags & ICP_FLAG_SRC_RTT) {
-        rtt = netdbHostRtt(icp_request->url.host());
-        int hops = netdbHostHops(icp_request->url.host());
+        rtt = netdbHostRtt(icp_request->GetHost());
+        int hops = netdbHostHops(icp_request->GetHost());
         src_rtt = ((hops & 0xFFFF) << 16) | (rtt & 0xFFFF);
 
         if (rtt)
@@ -550,7 +491,7 @@ doV2Query(int fd, Ip::Address &from, char *buf, icp_common_t header)
 }
 
 void
-icp_common_t::handleReply(char *buf, Ip::Address &from)
+_icp_common_t::handleReply(char *buf, Ip::Address &from)
 {
     if (neighbors_do_private_keys && reqnum == 0) {
         debugs(12, DBG_CRITICAL, "icpHandleIcpV2: Neighbor " << from << " returned reqnum = 0");
@@ -634,7 +575,7 @@ icpPktDump(icp_common_t * pkt)
 #endif
 
 void
-icpHandleUdp(int sock, void *)
+icpHandleUdp(int sock, void *data)
 {
     int *N = &incoming_sockets_accepted;
 
@@ -657,8 +598,7 @@ icpHandleUdp(int sock, void *)
             break;
 
         if (len < 0) {
-            int xerrno = errno;
-            if (ignoreErrno(xerrno))
+            if (ignoreErrno(errno))
                 break;
 
 #if _SQUID_LINUX_
@@ -666,9 +606,10 @@ icpHandleUdp(int sock, void *)
              * return ECONNREFUSED when sendto() fails and generates an ICMP
              * port unreachable message. */
             /* or maybe an EHOSTUNREACH "No route to host" message */
-            if (xerrno != ECONNREFUSED && xerrno != EHOSTUNREACH)
+            if (errno != ECONNREFUSED && errno != EHOSTUNREACH)
 #endif
-                debugs(50, DBG_IMPORTANT, "icpHandleUdp: FD " << sock << " recvfrom: " << xstrerr(xerrno));
+
+                debugs(50, DBG_IMPORTANT, "icpHandleUdp: FD " << sock << " recvfrom: " << xstrerror());
 
             break;
         }
@@ -763,7 +704,7 @@ icpOpenPorts(void)
 }
 
 static void
-icpIncomingConnectionOpened(const Comm::ConnectionPointer &conn, int)
+icpIncomingConnectionOpened(const Comm::ConnectionPointer &conn, int errNo)
 {
     if (!Comm::IsConnOpen(conn))
         fatal("Cannot open ICP Port");
@@ -833,14 +774,14 @@ icpCount(void *buf, int which, size_t len, int delay)
 
     if (SENT == which) {
         ++statCounter.icp.pkts_sent;
-        statCounter.icp.kbytes_sent += len;
+        kb_incr(&statCounter.icp.kbytes_sent, len);
 
         if (ICP_QUERY == icp->opcode) {
             ++statCounter.icp.queries_sent;
-            statCounter.icp.q_kbytes_sent += len;
+            kb_incr(&statCounter.icp.q_kbytes_sent, len);
         } else {
             ++statCounter.icp.replies_sent;
-            statCounter.icp.r_kbytes_sent += len;
+            kb_incr(&statCounter.icp.r_kbytes_sent, len);
             /* this is the sent-reply service time */
             statCounter.icp.replySvcTime.count(delay);
         }
@@ -849,14 +790,14 @@ icpCount(void *buf, int which, size_t len, int delay)
             ++statCounter.icp.hits_sent;
     } else if (RECV == which) {
         ++statCounter.icp.pkts_recv;
-        statCounter.icp.kbytes_recv += len;
+        kb_incr(&statCounter.icp.kbytes_recv, len);
 
         if (ICP_QUERY == icp->opcode) {
             ++statCounter.icp.queries_recv;
-            statCounter.icp.q_kbytes_recv += len;
+            kb_incr(&statCounter.icp.q_kbytes_recv, len);
         } else {
             ++statCounter.icp.replies_recv;
-            statCounter.icp.r_kbytes_recv += len;
+            kb_incr(&statCounter.icp.r_kbytes_recv, len);
             /* statCounter.icp.querySvcTime set in clientUpdateCounters */
         }
 

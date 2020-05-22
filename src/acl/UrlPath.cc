@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -9,22 +9,30 @@
 /* DEBUG: section 28    Access Control */
 
 #include "squid.h"
-#include "acl/FilledChecklist.h"
+#include "acl/Checklist.h"
 #include "acl/RegexData.h"
 #include "acl/UrlPath.h"
 #include "HttpRequest.h"
 #include "rfc1738.h"
 
 int
-ACLUrlPathStrategy::match (ACLData<char const *> * &data, ACLFilledChecklist *checklist)
+ACLUrlPathStrategy::match (ACLData<char const *> * &data, ACLFilledChecklist *checklist, ACLFlags &)
 {
-    if (checklist->request->url.path().isEmpty())
+    if (!checklist->request->urlpath.size())
         return -1;
 
-    char *esc_buf = SBufToCstring(checklist->request->url.path());
+    char *esc_buf = xstrdup(checklist->request->urlpath.termedBuf());
     rfc1738_unescape(esc_buf);
     int result = data->match(esc_buf);
-    xfree(esc_buf);
+    safe_free(esc_buf);
     return result;
 }
+
+ACLUrlPathStrategy *
+ACLUrlPathStrategy::Instance()
+{
+    return &Instance_;
+}
+
+ACLUrlPathStrategy ACLUrlPathStrategy::Instance_;
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -21,7 +21,7 @@ public:
 
     int someMethod() {
         if (!Instances)
-            exit(EXIT_FAILURE);
+            exit(1);
 
         return 1;
     }
@@ -41,7 +41,7 @@ public:
 
     int doSomething() {
         if (!Instances)
-            exit(EXIT_FAILURE);
+            exit (1);
         return 1;
     }
 };
@@ -86,12 +86,12 @@ main (int argc, char **argv)
         ToRefCount anotherObject(new _ToRefCount);
 
         if (anObject == anotherObject)
-            exit(1);
+            exit (1);
 
         anotherObject = NULL;
 
         if (!(anObject == anotherObject))
-            exit(1);
+            exit (1);
     }
     /* Can we get the pointer for a const object */
     {
@@ -100,7 +100,7 @@ main (int argc, char **argv)
         _ToRefCount const *aPointer = aConstObject.getRaw();
 
         if (aPointer != anObject.getRaw())
-            exit(2);
+            exit (2);
     }
     /* Can we get a refcounted pointer from a const object */
     {
@@ -126,6 +126,6 @@ main (int argc, char **argv)
             aBaseObject = anObject.getRaw();
         }
     }
-    return _ToRefCount::Instances == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
+    return _ToRefCount::Instances == 0 ? 0 : 1;
 }
 

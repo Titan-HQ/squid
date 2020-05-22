@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -21,20 +21,27 @@
 #include "client_side.h"
 #include "fde.h"
 #include "globals.h"
-#include "http/Stream.h"
 #include "HttpRequest.h"
 
 int
-ACLCertificateStrategy::match (ACLData<MatchType> * &data, ACLFilledChecklist *checklist)
+ACLCertificateStrategy::match (ACLData<MatchType> * &data, ACLFilledChecklist *checklist, ACLFlags &)
 {
     const int fd = checklist->fd();
     const bool goodDescriptor = 0 <= fd && fd <= Biggest_FD;
-    auto ssl = goodDescriptor ? fd_table[fd].ssl.get() : nullptr;
+    SSL *ssl = goodDescriptor ? fd_table[fd].ssl : 0;
     X509 *cert = SSL_get_peer_certificate(ssl);
     const bool res = data->match (cert);
     X509_free(cert);
     return res;
 }
+
+ACLCertificateStrategy *
+ACLCertificateStrategy::Instance()
+{
+    return &Instance_;
+}
+
+ACLCertificateStrategy ACLCertificateStrategy::Instance_;
 
 #endif /* USE_OPENSSL */
 

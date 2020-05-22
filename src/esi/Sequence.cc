@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -27,7 +27,6 @@ class esiExcept;
 esiSequence::~esiSequence ()
 {
     debugs(86, 5, "esiSequence::~esiSequence " << this);
-    FinishAllElements(elements); // finish if not already done
 }
 
 esiSequence::esiSequence(esiTreeParentPtr aParent, bool incrementalFlag) :
@@ -89,13 +88,12 @@ esiSequence::render(ESISegment::Pointer output)
 
     for (size_t i = 0; i < processedcount; ++i) {
         elements[i]->render(output);
-        FinishAnElement(elements[i], i);
+        elements.setNULL(i,i+1);
         /* FIXME: pass a ESISegment ** ? */
         output = output->tail();
     }
 
-    // prune completed elements
-    elements.erase(elements.begin(), elements.begin() + processedcount);
+    elements.pop_front (processedcount);
     processedcount = 0;
     assert (output->next == NULL);
 }
@@ -104,7 +102,7 @@ void
 esiSequence::finish()
 {
     debugs(86, 5, "esiSequence::finish: " << this << " is finished");
-    FinishAllElements(elements);
+    elements.setNULL(0, elements.size());
     parent = NULL;
 }
 
@@ -128,7 +126,7 @@ esiSequence::provideData (ESISegment::Pointer data, ESIElement *source)
     assert (index >= 0);
 
     /* remove the current node */
-    FinishAnElement(elements[index], index);
+    elements.setNULL(index, index+1);
 
     /* create a literal */
     esiLiteral *temp = new esiLiteral (data);
@@ -269,7 +267,7 @@ esiSequence::process (int inheritedVarsFlag)
             return processingResult;
 
         if (processingResult == ESI_PROCESS_FAILED) {
-            FinishAllElements(elements);
+            elements.setNULL (0, elements.size());
             failed = true;
             parent = NULL;
             processing = false;
@@ -315,7 +313,7 @@ esiSequence::fail (ESIElement *source, char const *anError)
 
     debugs(86, 5, "esiSequence::fail: " << this << " has failed.");
     parent->fail (this, anError);
-    FinishAllElements(elements);
+    elements.setNULL(0, elements.size());
     parent = NULL;
 }
 

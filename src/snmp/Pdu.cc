@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -45,8 +45,7 @@ Snmp::Pdu::operator = (const Pdu& pdu)
 void
 Snmp::Pdu::init()
 {
-    memset(static_cast<snmp_pdu *>(this), 0, sizeof(snmp_pdu));
-    aggrCount = 0;
+    memset(this, 0, sizeof(*this));
     errstat = SNMP_DEFAULT_ERRSTAT;
     errindex = SNMP_DEFAULT_ERRINDEX;
 }

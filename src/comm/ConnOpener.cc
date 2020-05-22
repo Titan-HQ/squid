@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -39,9 +39,7 @@ Comm::ConnOpener::ConnOpener(Comm::ConnectionPointer &c, AsyncCall::Pointer &han
     totalTries_(0),
     failRetries_(0),
     deadline_(squid_curtime + static_cast<time_t>(ctimeout))
-{
-    debugs(5, 3, "will connect to " << c << " with " << ctimeout << " timeout");
-}
+{}
 
 Comm::ConnOpener::~ConnOpener()
 {
@@ -412,8 +410,7 @@ Comm::ConnOpener::lookupLocalAddress()
     Ip::Address::InitAddr(addr);
 
     if (getsockname(conn_->fd, addr->ai_addr, &(addr->ai_addrlen)) != 0) {
-        int xerrno = errno;
-        debugs(50, DBG_IMPORTANT, "ERROR: Failed to retrieve TCP/UDP details for socket: " << conn_ << ": " << xstrerr(xerrno));
+        debugs(50, DBG_IMPORTANT, "ERROR: Failed to retrieve TCP/UDP details for socket: " << conn_ << ": " << xstrerror());
         Ip::Address::FreeAddr(addr);
         return;
     }
@@ -451,7 +448,7 @@ Comm::ConnOpener::timeout(const CommTimeoutCbParams &)
  * XXX: As soon as Comm::SetSelect() accepts Async calls we can use a ConnOpener::doConnect call
  */
 void
-Comm::ConnOpener::InProgressConnectRetry(int, void *data)
+Comm::ConnOpener::InProgressConnectRetry(int fd, void *data)
 {
     Pointer *ptr = static_cast<Pointer*>(data);
     assert(ptr);

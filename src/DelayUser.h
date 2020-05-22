@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -24,10 +24,11 @@
 /// \ingroup DelayPoolsAPI
 class DelayUserBucket : public RefCountable
 {
-    MEMPROXY_CLASS(DelayUserBucket);
 
 public:
     typedef RefCount<DelayUserBucket> Pointer;
+    void *operator new(size_t);
+    void operator delete (void *);
 
     void stats(StoreEntry *)const;
     DelayUserBucket(Auth::User::Pointer);
@@ -39,10 +40,11 @@ public:
 /// \ingroup DelayPoolsAPI
 class DelayUser : public CompositePoolNode
 {
-    MEMPROXY_CLASS(DelayUser);
 
 public:
     typedef RefCount<DelayUser> Pointer;
+    void *operator new(size_t);
+    void operator delete (void *);
     DelayUser();
     virtual ~DelayUser();
     virtual void stats(StoreEntry * sentry);
@@ -57,9 +59,10 @@ private:
     /// \ingroup DelayPoolsInternal
     class Id:public DelayIdComposite
     {
-        MEMPROXY_CLASS(DelayUser::Id);
 
     public:
+        void *operator new(size_t);
+        void operator delete (void *);
         Id(RefCount<DelayUser>, Auth::User::Pointer);
         ~Id();
         virtual int bytesWanted (int min, int max) const;

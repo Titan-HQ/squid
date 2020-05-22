@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -29,8 +29,6 @@ namespace Ipc
 ///  Coordinates shared activities of Strands (Squid processes or threads)
 class Coordinator: public Port
 {
-    CBDATA_CLASS(Coordinator);
-
 public:
     static Coordinator* Instance();
 
@@ -79,6 +77,8 @@ private:
 private:
     Coordinator(const Coordinator&); // not implemented
     Coordinator& operator =(const Coordinator&); // not implemented
+
+    CBDATA_CLASS2(Coordinator);
 };
 
 } // namespace Ipc

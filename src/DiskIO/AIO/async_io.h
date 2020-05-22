@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -9,17 +9,18 @@
 #ifndef __ASYNC_IO_H__
 #define __ASYNC_IO_H__
 
-#if HAVE_DISKIO_MODULE_AIO
+#if USE_DISKIO_AIO
 
 #if _SQUID_WINDOWS_
-#include "DiskIO/AIO/aio_win32.h"
+#include "aio_win32.h"
 #else
 #if HAVE_AIO_H
 #include <aio.h>
 #endif
 #endif
 
-#include "mem/forward.h"
+/* for FREE* */
+#include "typedefs.h"
 
 #define MAX_ASYNCOP     128
 
@@ -72,6 +73,6 @@ struct _async_queue {
     int aq_numpending;      /* Num of pending ops */
 };
 
-#endif /* HAVE_DISKIO_MODULE_AIO */
+#endif /* USE_DISKIO_AIO */
 #endif /* __ASYNC_IO_H_ */
 

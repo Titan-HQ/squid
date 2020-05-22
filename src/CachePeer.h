@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -14,7 +14,6 @@
 #include "enums.h"
 #include "icp_opcode.h"
 #include "ip/Address.h"
-#include "security/PeerOptions.h"
 
 //TODO: remove, it is unconditionally defined and always used.
 #define PEER_MULTICAST_SIBLINGS 1
@@ -23,177 +22,179 @@
 #include <openssl/ssl.h>
 #endif
 
+class CachePeerDomainList;
 class NeighborTypeDomainList;
 class PconnPool;
 class PeerDigest;
 class PeerPoolMgr;
 
+// currently a POD
 class CachePeer
 {
-    CBDATA_CLASS(CachePeer);
-
 public:
-    CachePeer() = default;
-    ~CachePeer();
-
-    u_int index = 0;
-    char *name = nullptr;
-    char *host = nullptr;
-    peer_t type = PEER_NONE;
+    u_int index;
+    char *name;
+    char *host;
+    peer_t type;
 
     Ip::Address in_addr;
 
     struct {
-        int pings_sent = 0;
-        int pings_acked = 0;
-        int fetches = 0;
-        int rtt = 0;
-        int ignored_replies = 0;
-        int n_keepalives_sent = 0;
-        int n_keepalives_recv = 0;
-        time_t probe_start = 0;
-        time_t last_query = 0;
-        time_t last_reply = 0;
-        time_t last_connect_failure = 0;
-        time_t last_connect_probe = 0;
-        int logged_state = PEER_ALIVE;   ///< so we can print dead/revived msgs
-        int conn_open = 0;               ///< current opened connections
+        int pings_sent;
+        int pings_acked;
+        int fetches;
+        int rtt;
+        int ignored_replies;
+        int n_keepalives_sent;
+        int n_keepalives_recv;
+        time_t probe_start;
+        time_t last_query;
+        time_t last_reply;
+        time_t last_connect_failure;
+        time_t last_connect_probe;
+        int logged_state;   /* so we can print dead/revived msgs */
+        int conn_open;      /* current opened connections */
     } stats;
 
-    struct icp_ {
-        icp_() { memset(&counts, 0, sizeof(counts)); }
-        int version = ICP_VERSION_CURRENT;
+    struct {
+        int version;
         int counts[ICP_END+1];
-        unsigned short port = CACHE_ICP_PORT;
+        unsigned short port;
     } icp;
 
 #if USE_HTCP
     struct {
-        double version = 0.0;
-        int counts[2] = {0, 0};
-        unsigned short port = 0;
+        double version;
+        int counts[2];
+        unsigned short port;
     } htcp;
 #endif
 
-    unsigned short http_port = CACHE_HTTP_PORT;
-    NeighborTypeDomainList *typelist = nullptr;
-    acl_access *access = nullptr;
+    unsigned short http_port;
+    CachePeerDomainList *peer_domain;
+    NeighborTypeDomainList *typelist;
+    acl_access *access;
 
     struct {
-        bool proxy_only = false;
-        bool no_query = false;
-        bool background_ping = false;
-        bool no_digest = false;
-        bool default_parent = false;
-        bool roundrobin = false;
-        bool weighted_roundrobin = false;
-        bool mcast_responder = false;
-        bool closest_only = false;
+        bool proxy_only;
+        bool no_query;
+        bool background_ping;
+        bool no_digest;
+        bool default_parent;
+        bool roundrobin;
+        bool weighted_roundrobin;
+        bool mcast_responder;
+        bool closest_only;
 #if USE_HTCP
-        bool htcp = false;
-        bool htcp_oldsquid = false;
-        bool htcp_no_clr = false;
-        bool htcp_no_purge_clr = false;
-        bool htcp_only_clr = false;
-        bool htcp_forward_clr = false;
+        bool htcp;
+        bool htcp_oldsquid;
+        bool htcp_no_clr;
+        bool htcp_no_purge_clr;
+        bool htcp_only_clr;
+        bool htcp_forward_clr;
 #endif
-        bool no_netdb_exchange = false;
+        bool no_netdb_exchange;
 #if USE_DELAY_POOLS
-        bool no_delay = false;
+        bool no_delay;
 #endif
-        bool allow_miss = false;
-        bool carp = false;
+        bool allow_miss;
+        bool carp;
         struct {
-            bool set = false; //If false, whole url is to be used. Overrides others
-            bool scheme = false;
-            bool host = false;
-            bool port = false;
-            bool path = false;
-            bool params = false;
+            bool set; //If false, whole url is to be used. Overrides others
+            bool scheme;
+            bool host;
+            bool port;
+            bool path;
+            bool params;
         } carp_key;
 #if USE_AUTH
-        bool userhash = false;
+        bool userhash;
 #endif
-        bool sourcehash = false;
-        bool originserver = false;
-        bool no_tproxy = false;
+        bool sourcehash;
+        bool originserver;
+        bool no_tproxy;
 #if PEER_MULTICAST_SIBLINGS
-        bool mcast_siblings = false;
+        bool mcast_siblings;
 #endif
-        bool auth_no_keytab = false;
     } options;
 
-    int weight = 1;
-    int basetime = 0;
+    int weight;
+    int basetime;
 
     struct {
-        double avg_n_members = 0.0;
-        int n_times_counted = 0;
-        int n_replies_expected = 0;
-        int ttl = 0;
-        int id = 0;
+        double avg_n_members;
+        int n_times_counted;
+        int n_replies_expected;
+        int ttl;
+        int id;
 
         struct {
-            bool count_event_pending = false;
-            bool counting = false;
+            bool count_event_pending;
+            bool counting;
         } flags;
     } mcast;
-
 #if USE_CACHE_DIGESTS
-    PeerDigest *digest = nullptr;
-    char *digest_url = nullptr;
+
+    PeerDigest *digest;
+    char *digest_url;
 #endif
 
-    int tcp_up = 0;         /* 0 if a connect() fails */
-    /// whether to do another TCP probe after current TCP probes
-    bool reprobe = false;
+    int tcp_up;         /* 0 if a connect() fails */
 
     Ip::Address addresses[10];
-    int n_addresses = 0;
-    int rr_count = 0;
-    CachePeer *next = nullptr;
-    int testing_now = 0;
+    int n_addresses;
+    int rr_count;
+    CachePeer *next;
+    int testing_now;
 
     struct {
-        unsigned int hash = 0;
-        double load_multiplier = 0.0;
-        double load_factor = 0.0;     ///< normalized weight value
+        unsigned int hash;
+        double load_multiplier;
+        double load_factor; /* normalized weight value */
     } carp;
 #if USE_AUTH
     struct {
-        unsigned int hash = 0;
-        double load_multiplier = 0.0;
-        double load_factor = 0.0;     ///< normalized weight value
+        unsigned int hash;
+        double load_multiplier;
+        double load_factor; /* normalized weight value */
     } userhash;
 #endif
     struct {
-        unsigned int hash = 0;
-        double load_multiplier = 0.0;
-        double load_factor = 0.0;     ///< normalized weight value
+        unsigned int hash;
+        double load_multiplier;
+        double load_factor; /* normalized weight value */
     } sourcehash;
 
-    char *login = nullptr;        /* Proxy authorization */
-    time_t connect_timeout_raw = 0; ///< connect_timeout; use peerConnectTimeout() instead!
-    int connect_fail_limit = 0;
-    int max_conn = 0;
-
-    /// optional "cache_peer standby=limit" feature
+    char *login;        /* Proxy authorization */
+    time_t connect_timeout;
+    int connect_fail_limit;
+    int max_conn;
     struct {
-        PconnPool *pool = nullptr;    ///< idle connection pool for this peer
-        CbcPointer<PeerPoolMgr> mgr;  ///< pool manager
-        int limit = 0;                ///< the limit itself
-        bool waitingForClose = false; ///< a conn must close before we open a standby conn
-    } standby;
+        PconnPool *pool; ///< idle connection pool for this peer
+        CbcPointer<PeerPoolMgr> mgr; ///< pool manager
+        int limit; ///< the limit itself
+        bool waitingForClose; ///< a conn must close before we open a standby conn
+    } standby; ///< optional "cache_peer standby=limit" feature
+    char *domain;       /* Forced domain */
+#if USE_OPENSSL
 
-    char *domain = nullptr; ///< Forced domain
+    int use_ssl;
+    char *sslcert;
+    char *sslkey;
+    int sslversion;
+    char *ssloptions;
+    char *sslcipher;
+    char *sslcafile;
+    char *sslcapath;
+    char *sslcrlfile;
+    char *sslflags;
+    char *ssldomain;
+    SSL_CTX *sslContext;
+    SSL_SESSION *sslSession;
+#endif
 
-    /// security settings for peer connection
-    Security::PeerOptions secure;
-    Security::ContextPointer sslContext;
-    Security::SessionStatePointer sslSession;
-
-    int front_end_https = 0; ///< 0 - off, 1 - on, 2 - auto
-    int connection_auth = 2; ///< 0 - off, 1 - on, 2 - auto
+    int front_end_https;
+    int connection_auth;
 };
 
 #endif /* SQUID_CACHEPEER_H_ */

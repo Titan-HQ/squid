@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -31,7 +31,7 @@ Mgr::IndexAction::IndexAction(const Command::Pointer &aCmd): Action(aCmd)
 }
 
 void
-Mgr::IndexAction::dump(StoreEntry *)
+Mgr::IndexAction::dump(StoreEntry* entry)
 {
     debugs(16, 5, HERE);
 }
@@ -75,7 +75,7 @@ Mgr::ShutdownAction::ShutdownAction(const Command::Pointer &aCmd): Action(aCmd)
 }
 
 void
-Mgr::ShutdownAction::dump(StoreEntry *)
+Mgr::ShutdownAction::dump(StoreEntry* entry)
 {
     debugs(16, DBG_CRITICAL, "Shutdown by Cache Manager command.");
     shut_down(SIGTERM);

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -13,25 +13,20 @@
 
 #include "comm/forward.h"
 #include "defines.h"
+#include "hier_code.h"
+#include "ip/Address.h"
+#include "MemPool.h"
+#include "typedefs.h"
 #if USE_SQUID_EUI
 #include "eui/Eui48.h"
 #include "eui/Eui64.h"
 #endif
-#include "hier_code.h"
-#include "ip/Address.h"
-#include "ip/forward.h"
-#include "mem/forward.h"
 #include "SquidTime.h"
 
 #include <iosfwd>
 #include <ostream>
 
 class CachePeer;
-
-namespace Security
-{
-class NegotiationHistory;
-};
 
 namespace Comm
 {
@@ -64,9 +59,9 @@ namespace Comm
  */
 class Connection : public RefCountable
 {
+public:
     MEMPROXY_CLASS(Comm::Connection);
 
-public:
     Connection();
 
     /** Clear the connection properties and close any open socket. */
@@ -105,24 +100,7 @@ public:
     /** The time the connection started */
     time_t startTime() const {return startTime_;}
 
-    /** The connection lifetime */
-    time_t lifeTime() const {return squid_curtime - startTime_;}
-
-    /** The time left for this connection*/
-    time_t timeLeft(const time_t idleTimeout) const;
-
-    /// Connection establishment timeout for callers that have already decided
-    /// to connect(2), either for the first time or after checking
-    /// EnoughTimeToReForward() during any re-forwarding attempts.
-    /// \returns the time left for this connection to become connected
-    /// \param fwdStart The start time of the peer selection/connection process.
-    time_t connectTimeout(const time_t fwdStart) const;
-
     void noteStart() {startTime_ = squid_curtime;}
-
-    Security::NegotiationHistory *tlsNegotiations();
-    const Security::NegotiationHistory *hasTlsNegotiations() const {return tlsHistory;}
-
 private:
     /** These objects may not be exactly duplicated. Use copyDetails() instead. */
     Connection(const Connection &c);
@@ -146,18 +124,8 @@ public:
     /** Quality of Service TOS values currently sent on this connection */
     tos_t tos;
 
-    /** Netfilter MARK values currently sent on this connection
-     * In case of FTP, the MARK will be sent on data connections as well.
-     */
+    /** Netfilter MARK values currently sent on this connection */
     nfmark_t nfmark;
-
-    /** Netfilter CONNMARK value previously retrieved from this connection
-     * In case of FTP, the CONNMARK will NOT be applied to data connections, for one main reason:
-     * the CONNMARK could be set by a third party like iptables and overwriting it in squid may
-     * cause side effects and break CONNMARK-based policy. In other words, data connection is
-     * related to control connection, but it's not the same.
-     */
-    nfmark_t nfConnmark = 0;
 
     /** COMM flags set on this connection */
     int flags;
@@ -175,14 +143,30 @@ private:
 
     /** The time the connection object was created */
     time_t startTime_;
-
-    /** TLS connection details*/
-    Security::NegotiationHistory *tlsHistory;
 };
 
 }; // namespace Comm
 
-std::ostream &operator << (std::ostream &os, const Comm::Connection &conn);
+MEMPROXY_CLASS_INLINE(Comm::Connection);
+
+// NP: Order and namespace here is very important.
+//     * The second define inlines the first.
+//     * Stream inheritance overloading is searched in the global scope first.
+
+inline std::ostream &
+operator << (std::ostream &os, const Comm::Connection &conn)
+{
+    os << "local=" << conn.local << " remote=" << conn.remote;
+    if (conn.fd >= 0)
+        os << " FD " << conn.fd;
+    if (conn.flags != COMM_UNSET)
+        os << " flags=" << conn.flags;
+#if USE_IDENT
+    if (*conn.rfc931)
+        os << " IDENT::" << conn.rfc931;
+#endif
+    return os;
+}
 
 inline std::ostream &
 operator << (std::ostream &os, const Comm::ConnectionPointer &conn)

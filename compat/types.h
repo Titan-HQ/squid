@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -45,12 +45,6 @@
 #include <netinet/in_systm.h>
 #endif
 
-#if __cplusplus && HAVE_TR1_RANDOM
-#if !HAVE_STD_UNIFORM_INT_DISTRIBUTION && !HAVE_STD_UNIFORM_REAL_DISTRIBUTION
-#include <tr1/random>
-#endif
-#endif
-
 /******************************************************/
 /* Typedefs for missing entries on a system           */
 /******************************************************/
@@ -58,7 +52,7 @@
 /*
  * Ensure that standard type limits are defined for use
  */
-#if __cplusplus
+#if __cplusplus >= 201103L
 #include <cstdint>
 #elif HAVE_STDINT_H
 #include <stdint.h>
@@ -164,21 +158,6 @@ typedef long mtyp_t;
 
 #ifndef NULL
 #define NULL 0
-#endif
-
-/***********************************************************/
-/* uniform_int_distribution backward compatibility wrapper */
-/***********************************************************/
-#if HAVE_STD_UNIFORM_INT_DISTRIBUTION
-#define xuniform_int_distribution std::uniform_int_distribution
-#else
-#define xuniform_int_distribution std::tr1::uniform_int
-#endif
-
-#if HAVE_STD_UNIFORM_REAL_DISTRIBUTION
-#define xuniform_real_distribution std::uniform_real_distribution
-#else
-#define xuniform_real_distribution std::tr1::uniform_real
 #endif
 
 #endif /* SQUID_TYPES_H */

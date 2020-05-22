@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -7,10 +7,9 @@
  */
 
 #include "squid.h"
-#include "acl/FilledChecklist.h"
+#include "acl/Checklist.h"
 #include "acl/Protocol.h"
 #include "acl/ProtocolData.h"
-#include "acl/Strategised.h"
 #include "HttpRequest.h"
 
 /* explicit template instantiation required for some systems */
@@ -18,8 +17,16 @@
 template class ACLStrategised<AnyP::ProtocolType>;
 
 int
-ACLProtocolStrategy::match(ACLData<MatchType> * &data, ACLFilledChecklist *checklist)
+ACLProtocolStrategy::match(ACLData<MatchType> * &data, ACLFilledChecklist *checklist, ACLFlags &)
 {
     return data->match(checklist->request->url.getScheme());
 }
+
+ACLProtocolStrategy *
+ACLProtocolStrategy::Instance()
+{
+    return &Instance_;
+}
+
+ACLProtocolStrategy ACLProtocolStrategy::Instance_;
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -38,7 +38,7 @@ class AsyncCallQueue;
 
 /**
  \todo add unique call IDs
- \todo CBDATA_CLASS kids
+ \todo CBDATA_CLASS2 kids
  \ingroup AsyncCallsAPI
  */
 class AsyncCall: public RefCountable
@@ -61,6 +61,12 @@ public:
 
     void print(std::ostream &os);
 
+    std::string dump(void);
+
+    friend std::ostream& operator<<(std::ostream& out, AsyncCall * obj){
+          out<<"AsyncCall::{"<<obj->id<<";"<<(obj->name?obj->name:"<NULL>")<<";"<<((obj->canceled()?obj->isCanceled:"NOT"))<<";"<<obj->LockCount()<<"}";
+          return (out);
+    }
     /// remove us from the queue; we are head unless we are queued after prev
     void dequeue(AsyncCall::Pointer &head, AsyncCall::Pointer &prev);
 

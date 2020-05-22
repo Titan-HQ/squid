@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -11,7 +11,6 @@
 
 #include "base/RefCount.h"
 #include "ConfigParser.h"
-#include "sbuf/SBuf.h"
 
 /*
  * Squid configuration allows users to define custom formats in
@@ -33,8 +32,6 @@ class StoreEntry;
 namespace Format
 {
 
-extern const SBuf Dash;
-
 class Token;
 
 // XXX: inherit from linked list
@@ -54,7 +51,7 @@ public:
     void assemble(MemBuf &mb, const AccessLogEntryPointer &al, int logSequenceNumber) const;
 
     /// dump this whole list of formats into the provided StoreEntry
-    void dump(StoreEntry * entry, const char *directiveName, bool eol = true) const;
+    void dump(StoreEntry * entry, const char *directiveName);
 
     char *name;
     Token *format;

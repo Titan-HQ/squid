@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -10,7 +10,6 @@
 
 #include "squid.h"
 #include "acl/Checklist.h"
-#include "cache_cf.h"
 #include "client_side.h"
 #include "client_side_reply.h"
 #include "client_side_request.h"
@@ -20,12 +19,11 @@
 #include "globals.h"
 #include "helper.h"
 #include "helper/Reply.h"
-#include "http/Stream.h"
 #include "HttpRequest.h"
 #include "mgr/Registration.h"
 #include "redirect.h"
 #include "rfc1738.h"
-#include "sbuf/SBuf.h"
+#include "SBuf.h"
 #include "SquidConfig.h"
 #include "Store.h"
 #if USE_AUTH
@@ -35,13 +33,11 @@
 #include "ssl/support.h"
 #endif
 
-/// url maximum length + extra informations passed to redirector
+/// url maximum lengh + extra informations passed to redirector
 #define MAX_REDIRECTOR_REQUEST_STRLEN (MAX_URL + 1024)
 
 class RedirectStateData
 {
-    CBDATA_CLASS(RedirectStateData);
-
 public:
     explicit RedirectStateData(const char *url);
     ~RedirectStateData();
@@ -50,6 +46,9 @@ public:
     SBuf orig_url;
 
     HLPCB *handler;
+
+private:
+    CBDATA_CLASS2(RedirectStateData);
 };
 
 static HLPCB redirectHandleReply;
@@ -94,24 +93,25 @@ redirectHandleReply(void *data, const Helper::Reply &reply)
         // * trim all but the first word off the response.
         // * warn once every 50 responses that this will stop being fixed-up soon.
         //
-        if (reply.other().hasContent()) {
-            const char * res = reply.other().content();
-            size_t replySize = 0;
+        if (const char * res = reply.other().content()) {
             if (const char *t = strchr(res, ' ')) {
                 static int warn = 0;
                 debugs(61, (!(warn++%50)? DBG_CRITICAL:2), "UPGRADE WARNING: URL rewriter reponded with garbage '" << t <<
                        "'. Future Squid will treat this as part of the URL.");
-                replySize = t - res;
-            } else
-                replySize = reply.other().contentSize();
+                const mb_size_t garbageLength = reply.other().contentSize() - (t-res);
+                reply.modifiableOther().truncate(garbageLength);
+            }
+            if (reply.other().hasContent() && *res == '\0')
+                reply.modifiableOther().clean(); // drop the whole buffer of garbage.
 
             // if we still have anything in other() after all that
             // parse it into status=, url= and rewrite-url= keys
-            if (replySize) {
-                MemBuf replyBuffer;
-                replyBuffer.init(replySize, replySize);
-                replyBuffer.append(reply.other().content(), reply.other().contentSize());
-                char * result = replyBuffer.content();
+            if (reply.other().hasContent()) {
+                /* 2012-06-28: This cast is due to urlParse() truncating too-long URLs itself.
+                 * At this point altering the helper buffer in that way is not harmful, but annoying.
+                 * When Bug 1961 is resolved and urlParse has a const API, this needs to die.
+                 */
+                char * result = reply.modifiableOther().content();
 
                 Helper::Reply newReply;
                 // BACKWARD COMPATIBILITY 2012-06-15:
@@ -200,7 +200,7 @@ redirectStats(StoreEntry * sentry)
         return;
     }
 
-    redirectors->packStatsInto(sentry, "Redirector Statistics");
+    helperStats(sentry, redirectors, "Redirector Statistics");
 
     if (Config.onoff.redirector_bypass)
         storeAppendPrintf(sentry, "\nNumber of requests bypassed "
@@ -215,7 +215,7 @@ storeIdStats(StoreEntry * sentry)
         return;
     }
 
-    storeIds->packStatsInto(sentry, "StoreId helper Statistics");
+    helperStats(sentry, storeIds, "StoreId helper Statistics");
 
     if (Config.onoff.store_id_bypass)
         storeAppendPrintf(sentry, "\nNumber of requests bypassed "
@@ -291,10 +291,8 @@ redirectStart(ClientHttpRequest * http, HLPCB * handler, void *data)
     assert(handler);
     debugs(61, 5, "redirectStart: '" << http->uri << "'");
 
-    // TODO: Deprecate Config.onoff.redirector_bypass in favor of either
-    // onPersistentOverload or a new onOverload option that applies to all helpers.
-    if (Config.onoff.redirector_bypass && redirectors->willOverload()) {
-        /* Skip redirector if the queue is full */
+    if (Config.onoff.redirector_bypass && redirectors->stats.queue_size) {
+        /* Skip redirector if there is one request queued */
         ++redirectorBypassed;
         Helper::Reply bypassReply;
         bypassReply.result = Helper::Okay;
@@ -317,8 +315,8 @@ storeIdStart(ClientHttpRequest * http, HLPCB * handler, void *data)
     assert(handler);
     debugs(61, 5, "storeIdStart: '" << http->uri << "'");
 
-    if (Config.onoff.store_id_bypass && storeIds->willOverload()) {
-        /* Skip StoreID Helper if the queue is full */
+    if (Config.onoff.store_id_bypass && storeIds->stats.queue_size) {
+        /* Skip StoreID Helper if there is one request queued */
         ++storeIdBypassed;
         Helper::Reply bypassReply;
 
@@ -349,22 +347,9 @@ redirectInit(void)
 
         redirectors->cmdline = Config.Program.redirect;
 
-        // BACKWARD COMPATIBILITY:
-        // if redirectot_bypass is set then use queue_size=0 as default size
-        if (Config.onoff.redirector_bypass && Config.redirectChildren.defaultQueueSize)
-            Config.redirectChildren.queue_size = 0;
-
         redirectors->childs.updateLimits(Config.redirectChildren);
 
         redirectors->ipc_type = IPC_STREAM;
-
-        redirectors->timeout = Config.Timeout.urlRewrite;
-
-        redirectors->retryTimedOut = (Config.onUrlRewriteTimeout.action == toutActRetry);
-        redirectors->retryBrokenHelper = true; // XXX: make this configurable ?
-        redirectors->onTimedOutResponse.clear();
-        if (Config.onUrlRewriteTimeout.action == toutActUseConfiguredResponse)
-            redirectors->onTimedOutResponse.assign(Config.onUrlRewriteTimeout.response);
 
         helperOpenServers(redirectors);
     }
@@ -376,31 +361,30 @@ redirectInit(void)
 
         storeIds->cmdline = Config.Program.store_id;
 
-        // BACKWARD COMPATIBILITY:
-        // if store_id_bypass is set then use queue_size=0 as default size
-        if (Config.onoff.store_id_bypass && Config.storeIdChildren.defaultQueueSize)
-            Config.storeIdChildren.queue_size = 0;
-
         storeIds->childs.updateLimits(Config.storeIdChildren);
 
         storeIds->ipc_type = IPC_STREAM;
 
-        storeIds->retryBrokenHelper = true; // XXX: make this configurable ?
-
         helperOpenServers(storeIds);
     }
 
-    if (Config.redirector_extras) {
-        delete redirectorExtrasFmt;
-        redirectorExtrasFmt = new ::Format::Format("url_rewrite_extras");
-        (void)redirectorExtrasFmt->parse(Config.redirector_extras);
-    }
+   if (Config.redirector_extras) {
+      if (redirectorExtrasFmt) {
+         delete redirectorExtrasFmt;
+         redirectorExtrasFmt=NULL;
+      };
+      redirectorExtrasFmt = new ::Format::Format("url_rewrite_extras");
+      (void)redirectorExtrasFmt->parse(Config.redirector_extras);
+   };
 
-    if (Config.storeId_extras) {
-        delete storeIdExtrasFmt;
-        storeIdExtrasFmt = new ::Format::Format("store_id_extras");
-        (void)storeIdExtrasFmt->parse(Config.storeId_extras);
-    }
+   if (Config.storeId_extras) {
+      if (storeIdExtrasFmt){
+         delete storeIdExtrasFmt;
+         storeIdExtrasFmt=NULL;
+      };
+      storeIdExtrasFmt = new ::Format::Format("store_id_extras");
+      (void)storeIdExtrasFmt->parse(Config.storeId_extras);
+   };
 
     init = true;
 }
@@ -412,6 +396,7 @@ redirectShutdown(void)
      * When and if needed for more helpers a separated shutdown
      * method will be added for each of them.
      */
+
     if (redirectors)
         helperShutdown(redirectors);
 
@@ -432,12 +417,5 @@ redirectShutdown(void)
 
     delete storeIdExtrasFmt;
     storeIdExtrasFmt = NULL;
-}
-
-void
-redirectReconfigure()
-{
-    redirectShutdown();
-    redirectInit();
 }
 

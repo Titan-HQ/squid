@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -12,14 +12,14 @@
  */
 
 #include "squid.h"
-#include "splay.h"
-#include "util.h"
 
 #include <cstdlib>
 #if HAVE_UNISTD_H
 #include <unistd.h>
 #endif
-#include <random>
+
+#include "splay.h"
+#include "util.h"
 
 class intnode
 {
@@ -69,7 +69,7 @@ SplayCheck::BeginWalk()
 }
 
 void
-SplayCheck::WalkVoid(void *const &node, void *)
+SplayCheck::WalkVoid(void *const &node, void *state)
 {
     intnode *A = (intnode *)node;
     CheckNode(*A);
@@ -82,23 +82,23 @@ SplayCheck::CheckNode(intnode const &A)
         /* failure */
 
         if (!ExpectedFail)
-            exit(EXIT_FAILURE);
+            exit (1);
     } else
         /* success */
         if (ExpectedFail)
-            exit(EXIT_FAILURE);
+            exit (1);
 
     LastValue = A.i;
 }
 
 void
-SplayCheck::WalkNode (intnode *const &a, void *)
+SplayCheck::WalkNode (intnode *const &a, void *state)
 {
     CheckNode (*a);
 }
 
 void
-SplayCheck::WalkNodeRef (intnode const &a, void *)
+SplayCheck::WalkNodeRef (intnode const &a, void *state)
 {
     CheckNode (a);
 }
@@ -127,19 +127,18 @@ destintref (intnode &)
 {}
 
 int
-main(int, char *[])
+main(int argc, char *argv[])
 {
-    std::mt19937 generator;
-    xuniform_int_distribution<int> distribution;
-    auto nextRandom = std::bind (distribution, generator);
-
     {
+        int i;
+        intnode *I;
         /* test void * splay containers */
         splayNode *top = NULL;
+        squid_srandom(time(NULL));
 
-        for (int i = 0; i < 100; ++i) {
-            intnode *I = (intnode *)xcalloc(sizeof(intnode), 1);
-            I->i = nextRandom();
+        for (i = 0; i < 100; ++i) {
+            I = (intnode *)xcalloc(sizeof(intnode), 1);
+            I->i = squid_random();
             if (top)
                 top = top->insert(I, compareintvoid);
             else
@@ -162,7 +161,7 @@ main(int, char *[])
         for ( int i = 0; i < 100; ++i) {
             intnode *I;
             I = new intnode;
-            I->i = nextRandom();
+            I->i = squid_random();
             safeTop = safeTop->insert(I, compareint);
         }
 
@@ -177,7 +176,7 @@ main(int, char *[])
 
         for (int i = 0; i < 100; ++i) {
             intnode I;
-            I.i = nextRandom();
+            I.i = squid_random();
             safeTop = safeTop->insert(I, compareintref);
         }
 
@@ -204,14 +203,14 @@ main(int, char *[])
         Splay<intnode> *safeTop = new Splay<intnode>();
 
         if (safeTop->start() != NULL)
-            exit(EXIT_FAILURE);
+            exit (1);
 
         if (safeTop->finish() != NULL)
-            exit(EXIT_FAILURE);
+            exit (1);
 
         for (int i = 0; i < 100; ++i) {
             intnode I;
-            I.i = nextRandom();
+            I.i = squid_random();
 
             if (I.i > 50 && I.i < 10000000)
                 safeTop->insert(I, compareintref);
@@ -226,16 +225,16 @@ main(int, char *[])
         }
 
         if (!safeTop->start())
-            exit(EXIT_FAILURE);
+            exit (1);
 
         if (safeTop->start()->data.i != 50)
-            exit(EXIT_FAILURE);
+            exit (1);
 
         if (!safeTop->finish())
-            exit(EXIT_FAILURE);
+            exit (1);
 
         if (safeTop->finish()->data.i != 10000000)
-            exit(EXIT_FAILURE);
+            exit (1);
 
         safeTop->destroy(destintref);
     }
@@ -244,30 +243,30 @@ main(int, char *[])
         Splay<intnode *> aSplay;
 
         if (aSplay.start() != NULL)
-            exit(EXIT_FAILURE);
+            exit (1);
 
         if (aSplay.size() != 0)
-            exit(EXIT_FAILURE);
+            exit (1);
 
         aSplay.insert (new intnode(5), compareint);
 
         if (aSplay.start() == NULL)
-            exit(EXIT_FAILURE);
+            exit (1);
 
         if (aSplay.size() != 1)
-            exit(EXIT_FAILURE);
+            exit (1);
 
         aSplay.destroy(destint);
 
         if (aSplay.start() != NULL)
-            exit(EXIT_FAILURE);
+            exit (1);
 
         if (aSplay.size() != 0)
-            exit(EXIT_FAILURE);
+            exit (1);
     }
 
     /* TODO: also test the other Splay API */
 
-    return EXIT_SUCCESS;
+    return 0;
 }
 

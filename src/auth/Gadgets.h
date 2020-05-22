@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -11,13 +11,56 @@
 
 #if USE_AUTH
 
+#include "auth/Config.h"
 #include "auth/User.h"
 #include "hash.h"
+#include "MemPool.h"
 
+/**
+ \ingroup AuthAPI
+ *
+ * This is used to link AuthUsers objects into the username cache.
+ * Because some schemes may link in aliases to a user,
+ * the link is not part of the AuthUser structure itself.
+ *
+ * Code must not hold onto copies of these objects.
+ * They may exist only so long as the AuthUser being referenced
+ * is recorded in the cache. Any caller using hash_remove_link
+ * must then delete the AuthUserHashPointer.
+ */
+class AuthUserHashPointer : public hash_link
+{
+    /* first two items must be same as hash_link */
+
+public:
+    MEMPROXY_CLASS(AuthUserHashPointer);
+
+    AuthUserHashPointer(Auth::User::Pointer);
+    ~AuthUserHashPointer() { 
+       this->next=NULL;
+       this->key=NULL; //in version 3.5.3 it is just a pointer
+       this->auth_user = NULL; 
+     };
+
+    Auth::User::Pointer user() const;
+
+private:
+    Auth::User::Pointer auth_user;
+};
+
+MEMPROXY_CLASS_INLINE(AuthUserHashPointer);
+
+namespace Auth
+{
+class Scheme;
+}
 class ConnStateData;
 class StoreEntry;
 
-// TODO this should be a generic cachemgr API type ?
+/**
+ \ingroup AuthAPI
+ \todo this should be a generic cachemgr API type ?
+ */
 typedef void AUTHSSTATS(StoreEntry *);
 
 /// \ingroup AuthAPI
@@ -46,8 +89,6 @@ int authenticateSchemeCount(void);
 
 /// \ingroup AuthAPI
 void authenticateOnCloseConnection(ConnStateData * conn);
-
-std::vector<Auth::User::Pointer> authenticateCachedUsersList();
 
 #endif /* USE_AUTH */
 #endif /* SQUID_AUTH_GADGETS_H */

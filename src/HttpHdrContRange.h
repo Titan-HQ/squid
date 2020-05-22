@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -9,18 +9,16 @@
 #ifndef SQUID_HTTPHDRCONTRANGE_H
 #define SQUID_HTTPHDRCONTRANGE_H
 
-#include "HttpHeaderRange.h"
-
 class HttpHeader;
+
+/* for HttpHdrRangeSpec */
+#include "HttpHeaderRange.h"
 
 /** HTTP Content-Range: header field */
 class HttpHdrContRange
 {
-    MEMPROXY_CLASS(HttpHdrContRange);
 
 public:
-    HttpHdrContRange() : elength(0) {}
-
     HttpHdrRangeSpec spec;
     int64_t elength;        /**< entity length, not content length */
 };
@@ -31,8 +29,9 @@ HttpHdrContRange *httpHdrContRangeCreate(void);
 HttpHdrContRange *httpHdrContRangeParseCreate(const char *crange_spec);
 /** returns true if range is valid; inits HttpHdrContRange */
 int httpHdrContRangeParseInit(HttpHdrContRange * crange, const char *crange_spec);
+void httpHdrContRangeDestroy(HttpHdrContRange * crange);
 HttpHdrContRange *httpHdrContRangeDup(const HttpHdrContRange * crange);
-void httpHdrContRangePackInto(const HttpHdrContRange * crange, Packable * p);
+void httpHdrContRangePackInto(const HttpHdrContRange * crange, Packer * p);
 /** inits with given spec */
 void httpHdrContRangeSet(HttpHdrContRange *, HttpHdrRangeSpec, int64_t);
 void httpHeaderAddContRange(HttpHeader *, HttpHdrRangeSpec, int64_t);

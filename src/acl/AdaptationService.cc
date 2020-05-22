@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -8,14 +8,14 @@
 
 #include "squid.h"
 #include "acl/AdaptationService.h"
-#include "acl/FilledChecklist.h"
+#include "acl/Checklist.h"
 #include "acl/IntRange.h"
 #include "adaptation/Config.h"
 #include "adaptation/History.h"
 #include "HttpRequest.h"
 
 int
-ACLAdaptationServiceStrategy::match (ACLData<MatchType> * &data, ACLFilledChecklist *checklist)
+ACLAdaptationServiceStrategy::match (ACLData<MatchType> * &data, ACLFilledChecklist *checklist, ACLFlags &)
 {
     HttpRequest::Pointer request = checklist->request;
     if (request == NULL)
@@ -32,4 +32,12 @@ ACLAdaptationServiceStrategy::match (ACLData<MatchType> * &data, ACLFilledCheckl
 
     return 0;
 }
+
+ACLAdaptationServiceStrategy *
+ACLAdaptationServiceStrategy::Instance()
+{
+    return &Instance_;
+}
+
+ACLAdaptationServiceStrategy ACLAdaptationServiceStrategy::Instance_;
 

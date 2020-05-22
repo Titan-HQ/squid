@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -9,15 +9,22 @@
 #ifndef SQUID_HASH_H
 #define SQUID_HASH_H
 
-typedef void HASHFREE(void *);
+typedef void HASHFREE(void *const);
 typedef int HASHCMP(const void *, const void *);
-typedef unsigned int HASHHASH(const void *, unsigned int);
+typedef unsigned int HASHHASH(const void *const, unsigned int);
 
 class hash_link {
 public:
-    hash_link() : key(nullptr), next(nullptr) {}
     void *key;
     hash_link *next;
+    hash_link():key(NULL),next(NULL){};
+    virtual ~hash_link(){
+       this->next=NULL;
+    };
+    virtual void release(void){
+       //intentionally left empty ... no one should call it
+    };
+
 };
 
 class hash_table {
@@ -31,20 +38,20 @@ public:
     int count;
 };
 
-SQUIDCEXTERN hash_table *hash_create(HASHCMP *, int, HASHHASH *);
-SQUIDCEXTERN void hash_join(hash_table *, hash_link *);
-SQUIDCEXTERN void hash_remove_link(hash_table *, hash_link *);
-SQUIDCEXTERN int hashPrime(int n);
-SQUIDCEXTERN hash_link *hash_lookup(hash_table *, const void *);
-SQUIDCEXTERN void hash_first(hash_table *);
-SQUIDCEXTERN hash_link *hash_next(hash_table *);
-SQUIDCEXTERN void hash_last(hash_table *);
-SQUIDCEXTERN hash_link *hash_get_bucket(hash_table *, unsigned int);
-SQUIDCEXTERN void hashFreeMemory(hash_table *);
-SQUIDCEXTERN void hashFreeItems(hash_table *, HASHFREE *);
+SQUIDCEXTERN hash_table *const hash_create(HASHCMP *const, int, HASHHASH *const);
+SQUIDCEXTERN void hash_join(hash_table *const, hash_link *const);
+SQUIDCEXTERN void hash_remove_link(hash_table *const, hash_link *const);
+SQUIDCEXTERN int hashPrime(const int n);
+SQUIDCEXTERN hash_link *const hash_lookup(hash_table *const, const void *const);
+SQUIDCEXTERN void hash_first(hash_table *const);
+SQUIDCEXTERN hash_link *const hash_next(hash_table *const );
+SQUIDCEXTERN void hash_last(hash_table *const );
+SQUIDCEXTERN hash_link *const hash_get_bucket(const hash_table *const , const unsigned int);
+SQUIDCEXTERN void hashFreeMemory(const hash_table *const );
+SQUIDCEXTERN void hashFreeItems(hash_table *const , HASHFREE *const);
 SQUIDCEXTERN HASHHASH hash_string;
 SQUIDCEXTERN HASHHASH hash4;
-SQUIDCEXTERN const char *hashKeyStr(hash_link *);
+SQUIDCEXTERN const char *const hashKeyStr(const hash_link *const );
 
 /*
  *  Here are some good prime number choices.  It's important not to

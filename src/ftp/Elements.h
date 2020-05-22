@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -9,9 +9,10 @@
 #ifndef SQUID_FTP_ELEMENTS_H
 #define SQUID_FTP_ELEMENTS_H
 
-#include "http/forward.h"
 #include "http/StatusCode.h"
-#include "sbuf/forward.h"
+
+class SBuf;
+class HttpReply;
 
 namespace AnyP
 {
@@ -21,7 +22,7 @@ class ProtocolVersion;
 namespace Ftp
 {
 
-/// Protocol version to use in Http::Message structures wrapping FTP messages.
+/// Protocol version to use in HttpMsg structures wrapping FTP messages.
 AnyP::ProtocolVersion ProtocolVersion();
 
 /// Create an internal HttpReply structure to house FTP control response info.
@@ -48,9 +49,6 @@ const SBuf &cmdStat();
 const SBuf &cmdStor();
 const SBuf &cmdStou();
 const SBuf &cmdUser();
-
-/// whether this is an informational 1xx response status code
-inline bool Is1xx(const int sc) { return Http::scContinue <= sc && sc < Http::scOkay; }
 
 } // namespace Ftp
 

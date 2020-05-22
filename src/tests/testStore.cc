@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -75,7 +75,7 @@ TestStore::stat(StoreEntry &) const
 }
 
 StoreSearch *
-TestStore::search()
+TestStore::search(String const url, HttpRequest *)
 {
     return NULL;
 }
@@ -83,43 +83,41 @@ TestStore::search()
 void
 testStore::testSetRoot()
 {
-    Store::Controller *aStore(new TestStore);
-    Store::Init(aStore);
+    StorePointer aStore(new TestStore);
+    Store::Root(aStore);
 
-    CPPUNIT_ASSERT_EQUAL(&Store::Root(), aStore);
-    Store::FreeMemory();
+    CPPUNIT_ASSERT_EQUAL(&Store::Root(),aStore.getRaw());
+    Store::Root(NULL);
 }
 
 void
 testStore::testUnsetRoot()
 {
-    Store::Controller *aStore(new TestStore);
-    Store::Controller *aStore2(new TestStore);
-    Store::Init(aStore);
-    Store::FreeMemory();
-    Store::Init(aStore2);
-    CPPUNIT_ASSERT_EQUAL(&Store::Root(),aStore2);
-    Store::FreeMemory();
+    StorePointer aStore(new TestStore);
+    StorePointer aStore2(new TestStore);
+    Store::Root(aStore);
+    Store::Root(aStore2);
+    CPPUNIT_ASSERT_EQUAL(&Store::Root(),aStore2.getRaw());
+    Store::Root(NULL);
 }
 
 void
 testStore::testStats()
 {
-    TestStore *aStore(new TestStore);
-    Store::Init(aStore);
+    TestStorePointer aStore(new TestStore);
+    Store::Root(aStore.getRaw());
     CPPUNIT_ASSERT_EQUAL(false, aStore->statsCalled);
-    StoreEntry entry;
-    Store::Stats(&entry);
+    Store::Stats(NullStoreEntry::getInstance());
     CPPUNIT_ASSERT_EQUAL(true, aStore->statsCalled);
-    Store::FreeMemory();
+    Store::Root(NULL);
 }
 
 void
 testStore::testMaxSize()
 {
-    Store::Controller *aStore(new TestStore);
-    Store::Init(aStore);
+    StorePointer aStore(new TestStore);
+    Store::Root(aStore.getRaw());
     CPPUNIT_ASSERT_EQUAL(static_cast<uint64_t>(3), aStore->maxSize());
-    Store::FreeMemory();
+    Store::Root(NULL);
 }
 

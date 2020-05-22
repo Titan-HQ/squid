@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -9,7 +9,6 @@
 #ifndef SQUID_HTTPHEADERFIELDINFO_H_
 #define SQUID_HTTPHEADERFIELDINFO_H_
 
-#include "http/RegisteredHeaders.h"
 #include "HttpHeaderFieldStat.h"
 #include "SquidString.h"
 
@@ -17,11 +16,11 @@
 class HttpHeaderFieldInfo
 {
 public:
-    HttpHeaderFieldInfo() : id(Http::HdrType::ACCEPT), type(Http::HdrFieldType::ftInvalid) {}
+    HttpHeaderFieldInfo() : id(HDR_ACCEPT), type(ftInvalid) {}
 
-    Http::HdrType id;
+    http_hdr_type id;
     String name;
-    Http::HdrFieldType type;
+    field_type type;
     HttpHeaderFieldStat stat;
 };
 

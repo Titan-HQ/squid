@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -9,7 +9,6 @@
 /* DEBUG: section 20    Storage Manager Swapfile Unpacker */
 
 #include "squid.h"
-#include "base/TextException.h"
 #include "Debug.h"
 #include "defines.h"
 #include "StoreMeta.h"
@@ -35,21 +34,25 @@ StoreMetaUnpacker::isBufferZero()
     return true;
 }
 
-void
-StoreMetaUnpacker::checkBuffer()
+bool
+StoreMetaUnpacker::isBufferSane()
 {
-    assert(buf); // paranoid; already checked in the constructor
-    if (buf[0] != static_cast<char>(STORE_META_OK))
-        throw TexcHere("store entry metadata is corrupted");
+    if (buf[0] != (char) STORE_META_OK)
+        return false;
+
     /*
      * sanity check on 'buflen' value.  It should be at least big
      * enough to hold one type and one length.
      */
     getBufferLength();
+
     if (*hdr_len < MinimumBufferLength)
-        throw TexcHere("store entry metadata is too small");
+        return false;
+
     if (*hdr_len > buflen)
-        throw TexcHere("store entry metadata is too big");
+        return false;
+
+    return true;
 }
 
 void
@@ -119,7 +122,8 @@ StoreMetaUnpacker::createStoreMeta ()
     tail = &TLV;
     assert(hdr_len != NULL);
 
-    checkBuffer();
+    if (!isBufferSane())
+        return NULL;
 
     getBufferLength();
 
@@ -130,10 +134,6 @@ StoreMetaUnpacker::createStoreMeta ()
             break;
     }
 
-    if (!TLV)
-        throw TexcHere("store entry metadata is empty");
-
-    assert(TLV);
     return TLV;
 }
 

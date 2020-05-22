@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -93,6 +93,8 @@
 
 #define NTLM_CHALLENGE_SZ 300
 
+#define  CONNECT_PORT        443
+
 #define current_stacksize(stack) ((stack)->top - (stack)->base)
 
 /* logfile status */
@@ -115,7 +117,7 @@
 
 #define MAX_FILES_PER_DIR (1<<20)
 
-#define MAX_URL  8192
+#define MAX_URL  32768
 #define MAX_LOGIN_SZ  128
 
 #define PEER_MAX_ADDRESSES 10

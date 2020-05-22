@@ -1,0 +1,166 @@
+#! /bin/sh
+cmd=$1
+debug=$2
+
+squid_configure() {
+   XGL="-L/usr/local/lib"
+   XWD=$(pwd)
+   INCLUDES=" -I/usr/local/include/glib-2.0 -I${XWD}/include -I${XWD}/src -I${XWD}/titanlib-current/ "
+   XBuild="$1"
+   XExtra="$2"
+   C='clang'
+   P='clang++'
+   conf_flags=" \
+   BUILDCXX=${P} \
+   CC=${C} \
+   CXX=${P} \
+   CPP=\"${C} -E\" \
+   CXXCPP=\"${P} -E\" \
+   ac_ct_CXX=${P} \
+   LIBS=\"${XWD}/titanlib-current/libtitan.a -lz -lpq -lidn -pthread -lpthread -lglib-2.0\" \
+   LDFLAGS=\"${XGL}\" \
+   CFLAGS=\"${INCLUDES}  -march=x86-64 ${XBuild} -Wno-unknown-warning-option -Wno-pointer-bool-conversion\" \
+   CXXFLAGS=\"${INCLUDES}  -std=c++11 -march=x86-64  ${XBuild} -Wno-unknown-warning-option -Wno-pointer-bool-conversion -Wno-c++1y-extensions\" \
+   CPPFLAGS=\"${INCLUDES}  -march=x86-64  ${XBuild} -Wno-unknown-warning-option -Wno-pointer-bool-conversion -Wno-c++1y-extensions\" \
+   SQUID_CPPUNIT_LA=\"-lcppunit\" \
+   --disable-arch-native \
+   --disable-linux-netfilter \
+   --disable-linux-tproxy \
+   --disable-carp \
+   --disable-icmp \
+   --disable-htcp \
+   --disable-select \
+   --disable-poll \
+   --disable-epoll \
+   --disable-devpoll \
+   --disable-translation \
+   --disable-auto-locale \
+   --enable-removal-policies=\"heap,lru\" \
+   --enable-follow-x-forwarded-for \
+   --enable-forw-via-db \
+   --enable-err-languages=\"English\" \
+   --enable-default-err-language=\"English\" \
+   --enable-log-daemon-helpers=\"file\" \
+   --enable-storeio=ufs,diskd,aufs \
+   --enable-auth \
+   --enable-auth-basic \
+   --enable-auth-ntlm \
+   --enable-auth-kshield \
+   --enable-icap-client \
+   --enable-underscores \
+   --enable-http-violations \
+   --enable-ssl \
+   --enable-ssl-crtd \
+   --enable-ipfw-transparent \
+   --prefix=/usr/blocker/proxy \
+   --program-transform-name=\"s/squid/proxy/g\" \
+   --enable-build-info=[WT500] \
+   --with-openssl \
+   --without-gnutls \
+   ${XExtra} \
+   "
+
+   if eval "./configure -v ${conf_flags}"; then
+      return 0
+   else
+      return 1
+   fi
+}
+
+configure() {
+  # FreeBSD's libtool includes older automake/aclocal files.  Fix it
+  # with a second run of autoreconf in libltdl.
+  autoreconf -if && ( cd libltdl && autoreconf -if )
+  if [ ! -f titanlib-current/libtitan.a ]; then
+    gmake -C titanlib-current || exit 1
+  fi
+
+  case "$debug" in
+    d|dbg|debug )
+      echo "[for debuging]"
+      XBuild='-O0 -g3 -ggdb3 -mstackrealign  -fstack-protector-all -D_FORTIFY_SOURCE=2 -mtune=generic -Wno-unknown-pragmas'
+      XExtra='--enable-debug-cbdata --disable-optimizations --disable-inline  --enable-stacktraces --enable-xmalloc-statistics'
+    ;;
+    *)
+      XBuild='-O2 -g0 -mstackrealign -D_FORTIFY_SOURCE=1 -pipe -march=x86-64 -mtune=generic -fPIE '
+      XExtra=''
+    ;;
+  esac
+
+  if squid_configure "${XBuild}" "${XExtra}"; then
+    chmod +x ./cfgaux/install-sh
+    echo "configuration OK"
+    return 0
+  else
+    echo "configuration FALSE"
+    return 1
+  fi
+
+}
+
+show_help() {
+   echo "configure(default)|build|clean|help(this)"
+}
+
+die() {
+  echo "$*"
+  exit 1
+}
+
+check_for_packages() {
+  if [ ! -f /usr/local/bin/gmake ]; then
+    die "Run pkg install gmake"
+  fi
+  if [ ! -f /usr/local/include/glib-2.0/glib.h ]; then
+    die "Run pkg install glib"
+  fi
+  if [ ! -f /usr/local/include/libpq-fe.h ]; then
+    die "Run pkg install postgresql95-client"
+  fi
+  if [ ! -f /usr/local/include/idna.h ]; then
+    die "Run pkg install libidn"
+  fi
+  if [ ! -f /usr/local/bin/automake ]; then
+    die "Run pkg install autoconf automake libtool"
+  fi
+}
+
+check_for_packages
+case $cmd in
+   configure)
+      echo "configure:"
+      configure
+   ;;
+   build)
+      if configure; then
+         echo "compiling"
+         if gmake -j; then
+            echo "compilation OK"
+         else
+            echo "compilation FAIL"
+	    exit 1
+         fi
+      fi
+   ;;
+   clean)
+      gmake -C titanlib-current clean
+      gmake clean
+      find . -name ".deps" -o -name ".libs" -type d -print0 \
+        | xargs -0 rm -rf
+      find . -name ".dirstamp" -o -name "Makefile" -type f \
+        ! -path "./scripts/*" ! -path "./test-suite/*" \
+        ! -path "./titanlib-current/*" \
+        ! -path "./contrib/nextstep/*" ! -path "./doc/Programming-Guide/*" \
+        -print0 | xargs -0 rm -f
+      rm -rf ./autom4te.cache ./libltdl/autom4te.cache ./libltdl/config
+      rm -f ./libtool ./config.* ./libltdl/libtool ./libltdl/config.* \
+        ./libltdl/stamp-h1 ./include/autoconf.h ./include/stamp-h1
+   ;;
+   --help|help)
+      show_help
+   ;;
+   *)
+      configure
+   ;;
+esac
+exit 0

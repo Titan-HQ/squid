@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -26,8 +26,6 @@ namespace Ipc
 /// aggregating individual strand responses and dumping the result if needed
 class Inquirer: public AsyncJob
 {
-    CBDATA_CLASS(Inquirer);
-
 public:
     Inquirer(Request::Pointer aRequest, const Ipc::StrandCoords& coords, double aTimeout);
     virtual ~Inquirer();
@@ -80,6 +78,8 @@ protected:
     static RequestsMap TheRequestsMap; ///< pending strand requests
 
     static unsigned int LastRequestId; ///< last requestId used
+
+    CBDATA_CLASS2(Inquirer);
 };
 
 } // namespace Ipc

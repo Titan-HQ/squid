@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -13,15 +13,17 @@
 
 #include "acl/Acl.h"
 #include "acl/Data.h"
+#include "CbDataList.h"
 #include "ssl/support.h"
 
 #include <list>
 
 class ACLAtStepData : public ACLData<Ssl::BumpStep>
 {
-    MEMPROXY_CLASS(ACLAtStepData);
 
 public:
+    MEMPROXY_CLASS(ACLAtStepData);
+
     ACLAtStepData();
     ACLAtStepData(ACLAtStepData const &);
     ACLAtStepData &operator= (ACLAtStepData const &);
@@ -30,10 +32,12 @@ public:
     virtual SBufList dump() const;
     void parse();
     bool empty() const;
-    virtual ACLAtStepData *clone() const;
+    virtual  ACLAtStepData *clone() const;
 
     std::list<Ssl::BumpStep> values;
 };
+
+MEMPROXY_CLASS_INLINE(ACLAtStepData);
 
 #endif /* USE_OPENSSL */
 

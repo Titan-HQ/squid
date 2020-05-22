@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -17,6 +17,7 @@
 #include "format/Format.h"
 #include "helper.h"
 #include "helper/Reply.h"
+#include "HttpMsg.h"
 #include "HttpRequest.h"
 #include "MemBuf.h"
 #include "rfc1738.h"
@@ -49,7 +50,7 @@ Auth::Basic::UserRequest::credentialsStr()
 /* log a basic user in
  */
 void
-Auth::Basic::UserRequest::authenticate(HttpRequest *, ConnStateData *, Http::HdrType)
+Auth::Basic::UserRequest::authenticate(HttpRequest * request, ConnStateData * conn, http_hdr_type type)
 {
     assert(user() != NULL);
 
@@ -58,7 +59,7 @@ Auth::Basic::UserRequest::authenticate(HttpRequest *, ConnStateData *, Http::Hdr
         return;
 
     /* are we about to recheck the credentials externally? */
-    if ((user()->expiretime + static_cast<Auth::Basic::Config*>(Auth::SchemeConfig::Find("basic"))->credentialsTTL) <= squid_curtime) {
+    if ((user()->expiretime + static_cast<Auth::Basic::Config*>(Auth::Config::Find("basic"))->credentialsTTL) <= squid_curtime) {
         debugs(29, 4, HERE << "credentials expired - rechecking");
         return;
     }
@@ -69,6 +70,8 @@ Auth::Basic::UserRequest::authenticate(HttpRequest *, ConnStateData *, Http::Hdr
     /* Decode now takes care of finding the AuthUser struct in the cache */
     /* after external auth occurs anyway */
     user()->expiretime = current_time.tv_sec;
+
+    return;
 }
 
 Auth::Direction
@@ -85,7 +88,7 @@ Auth::Basic::UserRequest::module_direction()
         return Auth::CRED_LOOKUP;
 
     case Auth::Ok:
-        if (user()->expiretime + static_cast<Auth::Basic::Config*>(Auth::SchemeConfig::Find("basic"))->credentialsTTL <= squid_curtime)
+        if (user()->expiretime + static_cast<Auth::Basic::Config*>(Auth::Config::Find("basic"))->credentialsTTL <= squid_curtime)
             return Auth::CRED_LOOKUP;
         return Auth::CRED_VALID;
 
@@ -106,7 +109,7 @@ Auth::Basic::UserRequest::startHelperLookup(HttpRequest *request, AccessLogEntry
     assert(basic_auth != NULL);
     debugs(29, 9, HERE << "'" << basic_auth->username() << ":" << basic_auth->passwd << "'");
 
-    if (static_cast<Auth::Basic::Config*>(Auth::SchemeConfig::Find("basic"))->authenticateProgram == NULL) {
+    if (static_cast<Auth::Basic::Config*>(Auth::Config::Find("basic"))->authenticateProgram == NULL) {
         debugs(29, DBG_CRITICAL, "ERROR: No Basic authentication program configured.");
         handler(data);
         return;
@@ -171,7 +174,7 @@ Auth::Basic::UserRequest::HandleReply(void *data, const Helper::Reply &reply)
     r->auth_user_request->user()->notes.appendNewOnly(&reply.notes);
 
     /* this is okay since we only play with the Auth::Basic::User child fields below
-     * and do not pass the pointer itself anywhere */
+     * and dont pass the pointer itself anywhere */
     Auth::Basic::User *basic_auth = dynamic_cast<Auth::Basic::User *>(r->auth_user_request->user().getRaw());
 
     assert(basic_auth != NULL);

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -9,52 +9,34 @@
 #ifndef SQUID__SRC_CLIENTINFO_H
 #define SQUID__SRC_CLIENTINFO_H
 
-#if USE_DELAY_POOLS
-#include "BandwidthBucket.h"
-#endif
-#include "base/ByteCounter.h"
 #include "cbdata.h"
 #include "enums.h"
 #include "hash.h"
 #include "ip/Address.h"
 #include "LogTags.h"
-#include "mem/forward.h"
 #include "typedefs.h"
-
 #include <deque>
 
 #if USE_DELAY_POOLS
 class CommQuotaQueue;
 #endif
 
-class ClientInfo : public hash_link
-#if USE_DELAY_POOLS
-    , public BandwidthBucket
-#endif
+class ClientInfo
 {
-    MEMPROXY_CLASS(ClientInfo);
-
 public:
-    explicit ClientInfo(const Ip::Address &);
-    ~ClientInfo();
+    hash_link hash;             /* must be first */
 
     Ip::Address addr;
 
-    struct Protocol {
-        Protocol() : n_requests(0) {
-            memset(result_hist, 0, sizeof(result_hist));
-        }
-
+    struct {
         int result_hist[LOG_TYPE_MAX];
         int n_requests;
-        ByteCounter kbytes_in;
-        ByteCounter kbytes_out;
-        ByteCounter hit_kbytes_out;
+        kb_t kbytes_in;
+        kb_t kbytes_out;
+        kb_t hit_kbytes_out;
     } Http, Icp;
 
-    struct Cutoff {
-        Cutoff() : time(0), n_req(0), n_denied(0) {}
-
+    struct {
         time_t time;
         int n_req;
         int n_denied;
@@ -62,12 +44,17 @@ public:
     int n_established;          /* number of current established connections */
     time_t last_seen;
 #if USE_DELAY_POOLS
+    double writeSpeedLimit;///< Write speed limit in bytes per second, can be less than 1, if too close to zero this could result in timeouts from client
+    double prevTime; ///< previous time when we checked
+    double bucketSize; ///< how much can be written now
+    double bucketSizeLimit;  ///< maximum bucket size
     bool writeLimitingActive; ///< Is write limiter active
     bool firstTimeConnection;///< is this first time connection for this client
 
     CommQuotaQueue *quotaQueue; ///< clients waiting for more write quota
     int rationedQuota; ///< precomputed quota preserving fairness among clients
     int rationedCount; ///< number of clients that will receive rationedQuota
+    bool selectWaiting; ///< is between commSetSelect and commHandleWrite
     bool eventWaiting; ///< waiting for commHandleWriteHelper event to fire
 
     // all those functions access Comm fd_table and are defined in comm.cc
@@ -78,13 +65,8 @@ public:
     unsigned int quotaPeekReserv() const; ///< returns the next reserv. to pop
     void quotaDequeue(); ///< pops queue head from queue
     void kickQuotaQueue(); ///< schedule commHandleWriteHelper call
-
-    /* BandwidthBucket API */
-    virtual int quota() override; ///< allocate quota for a just dequeued client
-    virtual bool applyQuota(int &nleft, Comm::IoCallback *state) override;
-    virtual void scheduleWrite(Comm::IoCallback *state) override;
-    virtual void onFdClosed() override;
-    virtual void reduceBucket(int len) override;
+    int quotaForDequed(); ///< allocate quota for a just dequeued client
+    void refillBucket(); ///< adds bytes to bucket based on rate and time
 
     void quotaDumpQueue(); ///< dumps quota queue for debugging
 
@@ -106,8 +88,6 @@ public:
 // a queue of Comm clients waiting for I/O quota controlled by delay pools
 class CommQuotaQueue
 {
-    CBDATA_CLASS(CommQuotaQueue);
-
 public:
     CommQuotaQueue(ClientInfo *info);
     ~CommQuotaQueue();
@@ -128,6 +108,8 @@ private:
     // TODO: optimize using a Ring- or List-based store?
     typedef std::deque<int> Store;
     Store fds; ///< descriptor queue
+
+    CBDATA_CLASS2(CommQuotaQueue);
 };
 #endif /* USE_DELAY_POOLS */
 

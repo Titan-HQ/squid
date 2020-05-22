@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -12,13 +12,12 @@
 
 #include "acl/AtStep.h"
 #include "acl/AtStepData.h"
-#include "acl/FilledChecklist.h"
+#include "acl/Checklist.h"
 #include "client_side.h"
-#include "http/Stream.h"
 #include "ssl/ServerBump.h"
 
 int
-ACLAtStepStrategy::match (ACLData<Ssl::BumpStep> * &data, ACLFilledChecklist *checklist)
+ACLAtStepStrategy::match (ACLData<Ssl::BumpStep> * &data, ACLFilledChecklist *checklist, ACLFlags &)
 {
     Ssl::ServerBump *bump = NULL;
     if (checklist->conn() != NULL && (bump = checklist->conn()->serverBump()))
@@ -27,6 +26,14 @@ ACLAtStepStrategy::match (ACLData<Ssl::BumpStep> * &data, ACLFilledChecklist *ch
         return data->match(Ssl::bumpStep1);
     return 0;
 }
+
+ACLAtStepStrategy *
+ACLAtStepStrategy::Instance()
+{
+    return &Instance_;
+}
+
+ACLAtStepStrategy ACLAtStepStrategy::Instance_;
 
 #endif /* USE_OPENSSL */
 

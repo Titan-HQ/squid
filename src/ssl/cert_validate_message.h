@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -26,9 +26,10 @@ namespace Ssl
 class CertValidationRequest
 {
 public:
-    Security::SessionPointer ssl;
-    Security::CertErrors *errors = nullptr; ///< The list of errors detected
+    SSL *ssl;
+    CertErrors *errors; ///< The list of errors detected
     std::string domainName; ///< The server name
+    CertValidationRequest() : ssl(NULL), errors(NULL) {}
 };
 
 /**
@@ -47,25 +48,23 @@ public:
     class  RecvdError
     {
     public:
-        RecvdError(): id(0), error_no(SSL_ERROR_NONE), cert(NULL), error_depth(-1) {}
+        RecvdError(): id(0), error_no(SSL_ERROR_NONE), cert(NULL) {}
         RecvdError(const RecvdError &);
         RecvdError & operator =(const RecvdError &);
         void setCert(X509 *);  ///< Sets cert to the given certificate
         int id; ///<  The id of the error
-        Security::ErrorCode error_no; ///< The OpenSSL error code
+        ssl_error_t error_no; ///< The OpenSSL error code
         std::string error_reason; ///< A string describing the error
-        Security::CertPointer cert; ///< The broken certificate
-        int error_depth; ///< The error depth
+        X509_Pointer cert; ///< The broken certificate
     };
 
     typedef std::vector<RecvdError> RecvdErrors;
-    explicit CertValidationResponse(const Security::SessionPointer &aSession) : ssl(aSession) {}
+
     /// Search in errors list for the error item with id=errorId.
     /// If none found a new RecvdError item added with the given id;
     RecvdError &getError(int errorId);
     RecvdErrors errors; ///< The list of parsed errors
-    Helper::ResultCode resultCode = Helper::Unknown; ///< The helper result code
-    Security::SessionPointer ssl;
+    Helper::ResultCode resultCode; ///< The helper result code
 };
 
 /**
@@ -85,7 +84,7 @@ private:
     {
     public:
         std::string name; ///< The certificate Id to use
-        Security::CertPointer cert;       ///< A pointer to certificate
+        X509_Pointer cert;       ///< A pointer to certificate
         CertItem(): cert(NULL) {}
         CertItem(const CertItem &);
         CertItem & operator =(const CertItem &);
@@ -100,7 +99,7 @@ public:
     void composeRequest(CertValidationRequest const &vcert);
 
     /// Parse a response message and fill the resp object with parsed informations
-    bool parseResponse(CertValidationResponse &resp, std::string &error);
+    bool parseResponse(CertValidationResponse &resp, STACK_OF(X509) *peerCerts, std::string &error);
 
     /// Search a CertItems list for the certificate with ID "name"
     X509 *getCertByName(std::vector<CertItem> const &, std::string const & name);
@@ -117,8 +116,6 @@ public:
     static const std::string param_error_reason;
     /// Parameter name for passing the error cert ID
     static const std::string param_error_cert;
-    /// Parameter name for passing the error depth
-    static const std::string param_error_depth;
     /// Parameter name for SSL version
     static const std::string param_proto_version;
     /// Parameter name for SSL cipher

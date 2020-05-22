@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -9,6 +9,12 @@
 #ifndef SQUID_SRC_BASE_LOCK_H
 #define SQUID_SRC_BASE_LOCK_H
 
+#ifndef WTRACE_MSG
+   #include <string>
+   #include <iostream>
+   //#define WTRACE_MSG(m) std::cout<<__FUNCTION__<<":"<<__LINE__<<":"<<m<<std::endl
+   #define WTRACE_MSG(m)
+#endif
 /**
  * This class provides a tracking counter and presents
  * lock(), unlock() and LockCount() accessors.
@@ -31,7 +37,7 @@ public:
 
     /// Register one lock / reference against this object.
     /// All locks must be cleared before it may be destroyed.
-    void lock() const {
+    void lock(const char * const, const uint32_t) const {
 #if defined(LOCKCOUNT_DEBUG)
         debugs(0,1, "Incrementing this " << static_cast<void*>(this) << " from count " << count_);
 #endif
@@ -41,12 +47,12 @@ public:
 
     /// Clear one lock / reference against this object.
     /// All locks must be cleared before it may be destroyed.
-    uint32_t unlock() const {
+    uint32_t unlock(const char * const,const uint32_t) const {
 #if defined(LOCKCOUNT_DEBUG)
         debugs(0,1, "Decrementing this " << static_cast<void*>(this) << " from count " << count_);
 #endif
-        assert(count_ > 0);
-        return --count_;
+         assert(this->count_ > 0);
+         return (--this->count_) ;
     }
 
     /// Inspect the current count of references.

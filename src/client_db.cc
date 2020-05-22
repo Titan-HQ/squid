@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -17,6 +17,7 @@
 #include "fqdncache.h"
 #include "ip/Address.h"
 #include "log/access_log.h"
+#include "Mem.h"
 #include "mgr/Registration.h"
 #include "SquidConfig.h"
 #include "SquidMath.h"
@@ -52,32 +53,34 @@ static int cleanup_removed;
 #define CLIENT_DB_HASH_SIZE 467
 #endif
 
-ClientInfo::ClientInfo(const Ip::Address &ip) :
-#if USE_DELAY_POOLS
-    BandwidthBucket(0, 0, 0),
-#endif
-    addr(ip),
-    n_established(0),
-    last_seen(0)
-#if USE_DELAY_POOLS
-    , writeLimitingActive(false),
-    firstTimeConnection(true),
-    quotaQueue(nullptr),
-    rationedQuota(0),
-    rationedCount(0),
-    eventWaiting(false)
-#endif
-{
-    debugs(77, 9, "ClientInfo constructed, this=" << static_cast<void*>(this));
-    char *buf = static_cast<char*>(xmalloc(MAX_IPSTRLEN)); // becomes hash.key
-    key = addr.toStr(buf,MAX_IPSTRLEN);
-}
-
 static ClientInfo *
+
 clientdbAdd(const Ip::Address &addr)
 {
-    ClientInfo *c = new ClientInfo(addr);
-    hash_join(client_table, static_cast<hash_link*>(c));
+    ClientInfo *c;
+    char *buf = static_cast<char*>(xmalloc(MAX_IPSTRLEN)); // becomes hash.key
+    c = (ClientInfo *)memAllocate(MEM_CLIENT_INFO);
+    debugs(77, 9, "ClientInfo constructed, this=" << c);
+    c->hash.key = addr.toStr(buf,MAX_IPSTRLEN);
+    c->addr = addr;
+#if USE_DELAY_POOLS
+    /* setup default values for client write limiter */
+    c->writeLimitingActive=false;
+    c->writeSpeedLimit=0;
+    c->bucketSize = 0;
+    c->firstTimeConnection=true;
+    c->quotaQueue = NULL;
+    c->rationedQuota = 0;
+    c->rationedCount = 0;
+    c->selectWaiting = false;
+    c->eventWaiting = false;
+
+    /* get current time */
+    getCurrentTime();
+    c->prevTime=current_dtime;/* put current time to have something sensible here */
+#endif
+    c->hash.next=NULL;
+    hash_join(client_table, &c->hash);
     ++statCounter.client_http.clients;
 
     if ((statCounter.client_http.clients > max_clients) && !cleanup_running && cleanup_scheduled < 2) {
@@ -136,7 +139,7 @@ ClientInfo * clientdbGetInfo(const Ip::Address &addr)
 }
 #endif
 void
-clientdbUpdate(const Ip::Address &addr, const LogTags &ltype, AnyP::ProtocolType p, size_t size)
+clientdbUpdate(const Ip::Address &addr, LogTags ltype, AnyP::ProtocolType p, size_t size)
 {
     char key[MAX_IPSTRLEN];
     ClientInfo *c;
@@ -156,18 +159,18 @@ clientdbUpdate(const Ip::Address &addr, const LogTags &ltype, AnyP::ProtocolType
 
     if (p == AnyP::PROTO_HTTP) {
         ++ c->Http.n_requests;
-        ++ c->Http.result_hist[ltype.oldType];
-        c->Http.kbytes_out += size;
+        ++ c->Http.result_hist[ltype];
+        kb_incr(&c->Http.kbytes_out, size);
 
-        if (ltype.isTcpHit())
-            c->Http.hit_kbytes_out += size;
+        if (logTypeIsATcpHit(ltype))
+            kb_incr(&c->Http.hit_kbytes_out, size);
     } else if (p == AnyP::PROTO_ICP) {
         ++ c->Icp.n_requests;
-        ++ c->Icp.result_hist[ltype.oldType];
-        c->Icp.kbytes_out += size;
+        ++ c->Icp.result_hist[ltype];
+        kb_incr(&c->Icp.kbytes_out, size);
 
-        if (LOG_UDP_HIT == ltype.oldType)
-            c->Icp.hit_kbytes_out += size;
+        if (LOG_UDP_HIT == ltype)
+            kb_incr(&c->Icp.hit_kbytes_out, size);
     }
 
     c->last_seen = squid_curtime;
@@ -268,6 +271,7 @@ void
 clientdbDump(StoreEntry * sentry)
 {
     const char *name;
+    ClientInfo *c;
     int icp_total = 0;
     int icp_hits = 0;
     int http_total = 0;
@@ -275,9 +279,8 @@ clientdbDump(StoreEntry * sentry)
     storeAppendPrintf(sentry, "Cache Clients:\n");
     hash_first(client_table);
 
-    while (hash_link *hash = hash_next(client_table)) {
-        const ClientInfo *c = static_cast<const ClientInfo *>(hash);
-        storeAppendPrintf(sentry, "Address: %s\n", hashKeyStr(hash));
+    while ((c = (ClientInfo *) hash_next(client_table))) {
+        storeAppendPrintf(sentry, "Address: %s\n", hashKeyStr(&c->hash));
         if ( (name = fqdncache_gethostbyaddr(c->addr, 0)) ) {
             storeAppendPrintf(sentry, "Name:    %s\n", name);
         }
@@ -286,7 +289,7 @@ clientdbDump(StoreEntry * sentry)
         storeAppendPrintf(sentry, "    ICP  Requests %d\n",
                           c->Icp.n_requests);
 
-        for (LogTags_ot l = LOG_TAG_NONE; l < LOG_TYPE_MAX; ++l) {
+        for (LogTags l = LOG_TAG_NONE; l < LOG_TYPE_MAX; ++l) {
             if (c->Icp.result_hist[l] == 0)
                 continue;
 
@@ -295,23 +298,23 @@ clientdbDump(StoreEntry * sentry)
             if (LOG_UDP_HIT == l)
                 icp_hits += c->Icp.result_hist[l];
 
-            storeAppendPrintf(sentry, "        %-20.20s %7d %3d%%\n", LogTags(l).c_str(), c->Icp.result_hist[l], Math::intPercent(c->Icp.result_hist[l], c->Icp.n_requests));
+            storeAppendPrintf(sentry, "        %-20.20s %7d %3d%%\n",LogTags_str[l], c->Icp.result_hist[l], Math::intPercent(c->Icp.result_hist[l], c->Icp.n_requests));
         }
 
         storeAppendPrintf(sentry, "    HTTP Requests %d\n", c->Http.n_requests);
 
-        for (LogTags_ot l = LOG_TAG_NONE; l < LOG_TYPE_MAX; ++l) {
+        for (LogTags l = LOG_TAG_NONE; l < LOG_TYPE_MAX; ++l) {
             if (c->Http.result_hist[l] == 0)
                 continue;
 
             http_total += c->Http.result_hist[l];
 
-            if (LogTags(l).isTcpHit())
+            if (logTypeIsATcpHit(l))
                 http_hits += c->Http.result_hist[l];
 
             storeAppendPrintf(sentry,
                               "        %-20.20s %7d %3d%%\n",
-                              LogTags(l).c_str(),
+                              LogTags_str[l],
                               c->Http.result_hist[l],
                               Math::intPercent(c->Http.result_hist[l], c->Http.n_requests));
         }
@@ -327,24 +330,21 @@ clientdbDump(StoreEntry * sentry)
 }
 
 static void
-clientdbFreeItem(void *data)
+clientdbFreeItem(void *const data)
 {
-    ClientInfo *c = (ClientInfo *)data;
-    delete c;
-}
+    if (ClientInfo *const c = (ClientInfo *const )data){
+       safe_free(c->hash.key);
 
-ClientInfo::~ClientInfo()
-{
-    safe_free(key);
+   #if USE_DELAY_POOLS
+       if (CommQuotaQueue *q = c->quotaQueue) {
+           q->clientInfo = NULL;
+           delete q; // invalidates cbdata, cancelling any pending kicks
+       }
+   #endif
 
-#if USE_DELAY_POOLS
-    if (CommQuotaQueue *q = quotaQueue) {
-        q->clientInfo = NULL;
-        delete q; // invalidates cbdata, cancelling any pending kicks
-    }
-#endif
-
-    debugs(77, 9, "ClientInfo destructed, this=" << static_cast<void*>(this));
+       debugs(77, 9, "ClientInfo destructed, this=" << c);
+       memFree(c, MEM_CLIENT_INFO);
+    };
 }
 
 void
@@ -356,14 +356,14 @@ clientdbFreeMemory(void)
 }
 
 static void
-clientdbScheduledGC(void *)
+clientdbScheduledGC(void *unused)
 {
     cleanup_scheduled = 0;
     clientdbStartGC();
 }
 
 static void
-clientdbGC(void *)
+clientdbGC(void *unused)
 {
     static int bucket = 0;
     hash_link *link_next;
@@ -390,7 +390,7 @@ clientdbGC(void *)
         if (age < 60)
             continue;
 
-        hash_remove_link(client_table, static_cast<hash_link*>(c));
+        hash_remove_link(client_table, &c->hash);
 
         clientdbFreeItem(c);
 
@@ -429,22 +429,30 @@ clientdbStartGC(void)
 Ip::Address *
 client_entry(Ip::Address *current)
 {
+    ClientInfo *c = NULL;
     char key[MAX_IPSTRLEN];
-    hash_first(client_table);
 
     if (current) {
         current->toStr(key,MAX_IPSTRLEN);
-        while (hash_link *hash = hash_next(client_table)) {
-            if (!strcmp(key, hashKeyStr(hash)))
+        hash_first(client_table);
+        while ((c = (ClientInfo *) hash_next(client_table))) {
+            if (!strcmp(key, hashKeyStr(&c->hash)))
                 break;
         }
-    }
 
-    ClientInfo *c = static_cast<ClientInfo *>(hash_next(client_table));
+        c = (ClientInfo *) hash_next(client_table);
+    } else {
+        hash_first(client_table);
+        c = (ClientInfo *) hash_next(client_table);
+    }
 
     hash_last(client_table);
 
-    return c ? &c->addr : nullptr;
+    if (c)
+        return (&c->addr);
+    else
+        return (NULL);
+
 }
 
 variable_list *
@@ -516,8 +524,8 @@ snmp_meshCtblFn(variable_list * Var, snint * ErrP)
     case MESH_CTBL_HTHITS:
         aggr = 0;
 
-        for (LogTags_ot l = LOG_TAG_NONE; l < LOG_TYPE_MAX; ++l) {
-            if (LogTags(l).isTcpHit())
+        for (LogTags l = LOG_TAG_NONE; l < LOG_TYPE_MAX; ++l) {
+            if (logTypeIsATcpHit(l))
                 aggr += c->Http.result_hist[l];
         }
 

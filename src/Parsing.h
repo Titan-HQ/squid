@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -36,14 +36,10 @@ int GetInteger(void);
  * Parse a percentage value, e.g., 20%.
  * The behavior of this function is similar as GetInteger().
  * The difference is that the token might contain '%' as percentage symbol (%),
- * and we may further check whether the value is in the range of [0, 100].
+ * and we further check whether the value is in the range of [0, 100]
  * For example, 20% and 20 are both valid tokens, while 101%, 101, -1 are invalid.
- *
- * \param limit whether to check the value is within 0-100% limit
- *
- * \return the percentage as a decimal number. ie 100% = 1.00, 50% = 0.5
  */
-double GetPercentage(bool limit = true);
+int GetPercentage(void);
 
 unsigned short GetShort(void);
 

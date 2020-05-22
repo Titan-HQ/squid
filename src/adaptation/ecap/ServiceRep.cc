@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -170,8 +170,6 @@ void
 Adaptation::Ecap::ServiceRep::finalize()
 {
     Adaptation::Service::finalize();
-    if (!cfg().connectionEncryption.configured())
-        writeableCfg().connectionEncryption.defaultTo(true);
     theService = FindAdapterService(cfg().uri);
     if (theService) {
         try {
@@ -236,19 +234,17 @@ bool Adaptation::Ecap::ServiceRep::probed() const
 
 bool Adaptation::Ecap::ServiceRep::up() const
 {
-    return bool(theService);
+    return theService;
 }
 
-bool Adaptation::Ecap::ServiceRep::wantsUrl(const SBuf &urlPath) const
+bool Adaptation::Ecap::ServiceRep::wantsUrl(const String &urlPath) const
 {
     Must(up());
-    SBuf nonConstUrlPath = urlPath;
-    // c_str() reallocates and terminates for libecap API
-    return theService->wantsUrl(nonConstUrlPath.c_str());
+    return theService->wantsUrl(urlPath.termedBuf());
 }
 
 Adaptation::Initiate *
-Adaptation::Ecap::ServiceRep::makeXactLauncher(Http::Message *virgin,
+Adaptation::Ecap::ServiceRep::makeXactLauncher(HttpMsg *virgin,
         HttpRequest *cause, AccessLogEntry::Pointer &alp)
 {
     Must(up());

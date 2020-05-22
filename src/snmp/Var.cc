@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -44,7 +44,7 @@ Snmp::Var::operator = (const Var& var)
 void
 Snmp::Var::init()
 {
-    memset(static_cast<variable_list *>(this), 0, sizeof(variable_list));
+    memset(this, 0, sizeof(*this));
 }
 
 Snmp::Var&
@@ -156,8 +156,10 @@ Snmp::Var::assign(const Var& var)
 void
 Snmp::Var::clearName()
 {
-    xfree(name);
-    name = nullptr;
+    if (name != NULL) {
+        xfree(name);
+        name = NULL;
+    }
     name_length = 0;
 }
 
@@ -181,8 +183,10 @@ Snmp::Var::setName(const Range<const oid*>& aName)
 void
 Snmp::Var::clearValue()
 {
-    xfree(val.string);
-    val.string = nullptr;
+    if (val.string != NULL) {
+        xfree(val.string);
+        val.string = NULL;
+    }
     val_len = 0;
     type = 0;
 }

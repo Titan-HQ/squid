@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -12,6 +12,8 @@
 #include "base/AsyncJob.h"
 #include "base/CbcPointer.h"
 #include "MemBuf.h"
+
+#include "TAPE.hxx"
 
 class BodyPipe;
 
@@ -87,10 +89,8 @@ private:
  * consume it. For example, connects ConnStateData with FtpStateData OR
  * ICAPModXact with HttpStateData.
  */
-class BodyPipe: public RefCountable
+class BodyPipe: public RefCountable, public titan_v3::IBodyPipe
 {
-    MEMPROXY_CLASS(BodyPipe);
-
 public:
     typedef RefCount<BodyPipe> Pointer;
     typedef BodyProducer Producer;
@@ -126,7 +126,8 @@ public:
     void clearConsumer(); // aborts if still piping
     void expectNoConsumption(); ///< there will be no more setConsumer() calls
     size_t getMoreData(MemBuf &buf);
-    void consume(size_t size);
+    bool consume(size_t size);
+    bool consume_without_read(size_t size);
     bool expectMoreAfter(uint64_t offset) const;
     bool exhausted() const; // saw eof/abort and all data consumed
     bool stillConsuming(const Consumer::Pointer &consumer) const { return theConsumer == consumer; }
@@ -166,6 +167,17 @@ private:
     bool mustAutoConsume; // consume when there is no consumer
     bool abortedConsumption; ///< called BodyProducer::noteBodyConsumerAborted
     bool isCheckedOut; // to keep track of checkout violations
+
+    CBDATA_CLASS2(BodyPipe);
+public:
+    //titan
+
+   virtual uint64_t get_BodySize(void)const{
+		return (this->theBuf.size>0?this->theBuf.size:0);
+	}
+	virtual const char *get_BodyContent(void) const{
+		return (this->theBuf.content());
+	}
 };
 
 #endif /* SQUID_BODY_PIPE_H */

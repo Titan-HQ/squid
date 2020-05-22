@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -10,29 +10,33 @@
 #define SQUID_ACLNOTEDATA_H
 
 #include "acl/Data.h"
-#include "Notes.h"
+#include "MemPool.h"
 #include "SquidString.h"
 
-class ACLStringData;
+class HttpRequest;
+class NotePairs;
 
 /// \ingroup ACLAPI
-class ACLNoteData : public ACLData<NotePairs::Entry *>
+class ACLNoteData : public ACLData<HttpRequest *>
 {
+public:
     MEMPROXY_CLASS(ACLNoteData);
 
-public:
     ACLNoteData();
     virtual ~ACLNoteData();
-    virtual bool match(NotePairs::Entry *);
+    virtual bool match(HttpRequest* request);
     virtual SBufList dump() const;
     virtual void parse();
     virtual bool empty() const;
-    virtual ACLData<NotePairs::Entry *> *clone() const;
+    virtual ACLData<HttpRequest *> *clone() const;
 
 private:
-    SBuf name;                   ///< Note name to check. It is always set
-    ACLStringData *values; ///< if set, at least one value must match
+    bool matchNotes(NotePairs *note);
+    String name;                   ///< Note name to check. It is always set
+    ACLData<char const *> *values; ///< if set, at least one value must match
 };
+
+MEMPROXY_CLASS_INLINE(ACLNoteData);
 
 #endif /* SQUID_ACLNOTEDATA_H */
 

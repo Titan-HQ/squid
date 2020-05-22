@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -11,12 +11,12 @@
 #include "base/TextException.h"
 #include "BodyPipe.h"
 
+CBDATA_CLASS_INIT(BodyPipe);
+
 // BodySink is a BodyConsumer class which  just consume and drops
 // data from a BodyPipe
 class BodySink: public BodyConsumer
 {
-    CBDATA_CLASS(BodySink);
-
 public:
     BodySink(const BodyPipe::Pointer &bp): AsyncJob("BodySink"), body_pipe(bp) {}
     virtual ~BodySink() { assert(!body_pipe); }
@@ -25,16 +25,18 @@ public:
         size_t contentSize = bp->buf().contentSize();
         bp->consume(contentSize);
     }
-    virtual void noteBodyProductionEnded(BodyPipe::Pointer) {
+    virtual void noteBodyProductionEnded(BodyPipe::Pointer bp) {
         stopConsumingFrom(body_pipe);
     }
-    virtual void noteBodyProducerAborted(BodyPipe::Pointer) {
+    virtual void noteBodyProducerAborted(BodyPipe::Pointer bp) {
         stopConsumingFrom(body_pipe);
     }
     bool doneAll() const {return !body_pipe && AsyncJob::doneAll();}
 
 private:
     BodyPipe::Pointer body_pipe; ///< the pipe we are consuming from
+
+    CBDATA_CLASS2(BodySink);
 };
 
 CBDATA_CLASS_INIT(BodySink);
@@ -216,7 +218,7 @@ BodyPipe::putMoreData(const char *aBuffer, size_t size)
         size = min((uint64_t)size, unproducedSize());
 
     const size_t spaceSize = static_cast<size_t>(theBuf.potentialSpaceSize());
-    if ((size = min(size, spaceSize))) {
+    if (aBuffer && (size = min(size, spaceSize))) {
         theBuf.append(aBuffer, size);
         postAppend(size);
         return size;
@@ -306,11 +308,19 @@ BodyPipe::getMoreData(MemBuf &aMemBuffer)
     return size; // cannot be zero if we called buf.init above
 }
 
-void
+bool
 BodyPipe::consume(size_t size)
 {
     theBuf.consume(size);
     postConsume(size);
+    return true;
+}
+
+bool
+BodyPipe::consume_without_read(size_t size)
+{
+    theBuf.consume(size);
+    return true;
 }
 
 // In the AutoConsumption  mode the consumer has gone but the producer continues
@@ -444,19 +454,19 @@ const char *BodyPipe::status() const
 
     outputBuffer.append(" [", 2);
 
-    outputBuffer.appendf("%" PRIu64 "<=%" PRIu64, theGetSize, thePutSize);
+    outputBuffer.Printf("%" PRIu64 "<=%" PRIu64, theGetSize, thePutSize);
     if (theBodySize >= 0)
-        outputBuffer.appendf("<=%" PRId64, theBodySize);
+        outputBuffer.Printf("<=%" PRId64, theBodySize);
     else
         outputBuffer.append("<=?", 3);
 
-    outputBuffer.appendf(" %" PRId64 "+%" PRId64, static_cast<int64_t>(theBuf.contentSize()), static_cast<int64_t>(theBuf.spaceSize()));
+    outputBuffer.Printf(" %d+%d", (int)theBuf.contentSize(), (int)theBuf.spaceSize());
 
-    outputBuffer.appendf(" pipe%p", this);
+    outputBuffer.Printf(" pipe%p", this);
     if (theProducer.set())
-        outputBuffer.appendf(" prod%p", theProducer.get());
+        outputBuffer.Printf(" prod%p", theProducer.get());
     if (theConsumer.set())
-        outputBuffer.appendf(" cons%p", theConsumer.get());
+        outputBuffer.Printf(" cons%p", theConsumer.get());
 
     if (mustAutoConsume)
         outputBuffer.append(" A", 2);

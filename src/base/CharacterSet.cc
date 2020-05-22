@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -10,7 +10,6 @@
 #include "CharacterSet.h"
 
 #include <algorithm>
-#include <iostream>
 #include <functional>
 
 CharacterSet &
@@ -28,19 +27,12 @@ CharacterSet::operator +=(const CharacterSet &src)
     return *this;
 }
 
-CharacterSet &
-CharacterSet::operator -=(const CharacterSet &src)
+CharacterSet
+CharacterSet::operator +(const CharacterSet &src) const
 {
-    Storage::const_iterator s = src.chars_.begin();
-    const Storage::const_iterator e = src.chars_.end();
-    Storage::iterator d = chars_.begin();
-    while (s != e) {
-        if (*s)
-            *d = 0;
-        ++s;
-        ++d;
-    }
-    return *this;
+    CharacterSet rv(*this);
+    rv += src;
+    return rv;
 }
 
 CharacterSet &
@@ -74,7 +66,7 @@ CharacterSet::complement(const char *label) const
 }
 
 CharacterSet::CharacterSet(const char *label, const char * const c) :
-    name(label ? label: "anonymous"),
+    name(label == NULL ? "anonymous" : label),
     chars_(Storage(256,0))
 {
     const size_t clen = strlen(c);
@@ -83,48 +75,10 @@ CharacterSet::CharacterSet(const char *label, const char * const c) :
 }
 
 CharacterSet::CharacterSet(const char *label, unsigned char low, unsigned char high) :
-    name(label ? label: "anonymous"),
+    name(label == NULL ? "anonymous" : label),
     chars_(Storage(256,0))
 {
     addRange(low,high);
-}
-
-CharacterSet::CharacterSet(const char *label, std::initializer_list<std::pair<uint8_t, uint8_t>> ranges) :
-    name(label ? label: "anonymous"),
-    chars_(Storage(256,0))
-{
-    for (auto range: ranges)
-        addRange(range.first, range.second);
-}
-
-void
-CharacterSet::printChars(std::ostream &os) const
-{
-    for (size_t idx = 0; idx < 256; ++idx) {
-        if (chars_[idx])
-            os << static_cast<char>(idx);
-    }
-}
-
-CharacterSet
-operator+ (CharacterSet lhs, const CharacterSet &rhs)
-{
-    lhs += rhs;
-    return lhs;
-}
-
-CharacterSet
-operator- (CharacterSet lhs, const CharacterSet &rhs)
-{
-    lhs -= rhs;
-    return lhs;
-}
-
-std::ostream&
-operator <<(std::ostream &s, const CharacterSet &c)
-{
-    s << "CharacterSet(" << c.name << ')';
-    return s;
 }
 
 const CharacterSet
@@ -132,24 +86,32 @@ const CharacterSet
 CharacterSet::ALPHA("ALPHA", "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"),
              CharacterSet::BIT("BIT","01"),
              CharacterSet::CR("CR","\r"),
-CharacterSet::CTL("CTL", {{0x01,0x1f},{0x7f,0x7f}}),
-CharacterSet::DIGIT("DIGIT","0123456789"),
-CharacterSet::DQUOTE("DQUOTE","\""),
-CharacterSet::HEXDIG("HEXDIG","0123456789aAbBcCdDeEfF"),
-CharacterSet::HTAB("HTAB","\t"),
-CharacterSet::LF("LF","\n"),
-CharacterSet::SP("SP"," "),
-CharacterSet::VCHAR("VCHAR", 0x21, 0x7e),
+#if __cplusplus == 201103L
+//CharacterSet::CTL("CTL",{{0x01,0x1f},{0x7f,0x7f}}),
+#endif
+             CharacterSet::DIGIT("DIGIT","0123456789"),
+             CharacterSet::DQUOTE("DQUOTE","\""),
+             CharacterSet::HEXDIG("HEXDIG","0123456789aAbBcCdDeEfF"),
+             CharacterSet::HTAB("HTAB","\t"),
+             CharacterSet::LF("LF","\n"),
+             CharacterSet::SP("SP"," "),
+             CharacterSet::VCHAR("VCHAR", 0x21, 0x7e),
 // RFC 7230
-CharacterSet::WSP("WSP"," \t"),
-CharacterSet::CTEXT("ctext", {{0x09,0x09},{0x20,0x20},{0x2a,0x5b},{0x5d,0x7e},{0x80,0xff}}),
-CharacterSet::TCHAR("TCHAR","!#$%&'*+-.^_`|~0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"),
-CharacterSet::SPECIAL("SPECIAL","()<>@,;:\\\"/[]?={}"),
-CharacterSet::QDTEXT("QDTEXT", {{0x09,0x09},{0x20,0x21},{0x23,0x5b},{0x5d,0x7e},{0x80,0xff}}),
-CharacterSet::OBSTEXT("OBSTEXT",0x80,0xff),
+             CharacterSet::WSP("WSP"," \t"),
+#if __cplusplus == 201103L
+//CharacterSet::CTEXT("ctext",{{0x09,0x09},{0x20,0x20},{0x2a,0x5b},{0x5d,0x7e},{0x80,0xff}}),
+#endif
+             CharacterSet::TCHAR("TCHAR","!#$%&'*+-.^_`|~0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"),
+             CharacterSet::SPECIAL("SPECIAL","()<>@,;:\\\"/[]?={}"),
+#if __cplusplus == 201103L
+//CharacterSet::QDTEXT("QDTEXT",{{0x09,0x09},{0x20,0x21},{0x23,0x5b},{0x5d,0x7e},{0x80,0xff}}),
+#endif
+             CharacterSet::OBSTEXT("OBSTEXT",0x80,0xff),
 // RFC 7232
-CharacterSet::ETAGC("ETAGC", {{0x21,0x21},{0x23,0x7e},{0x80,0xff}}),
+#if __cplusplus == 201103L
+//CharacterSet::ETAGC("ETAGC",{{0x21,0x21},{0x23,0x7e},{0x80,0xff}}),
+#endif
 // RFC 7235
-CharacterSet::TOKEN68C("TOKEN68C","-._~+/0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
-;
+             CharacterSet::TOKEN68C("TOKEN68C","-._~+/0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
+             ;
 

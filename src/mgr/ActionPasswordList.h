@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -9,7 +9,7 @@
 #ifndef SQUID_MGR_CACHEMGRPASSWD_H_
 #define SQUID_MGR_CACHEMGRPASSWD_H_
 
-#include "sbuf/forward.h"
+class wordlist;
 
 namespace Mgr
 {
@@ -18,11 +18,12 @@ namespace Mgr
 class ActionPasswordList
 {
 public:
+    ActionPasswordList() : passwd(NULL), actions(NULL), next(NULL) {}
     ~ActionPasswordList();
 
-    char *passwd = nullptr;
-    SBufList actions;
-    ActionPasswordList *next = nullptr;
+    char *passwd;
+    wordlist *actions;
+    ActionPasswordList *next;
 };
 
 } //namespace Mgr

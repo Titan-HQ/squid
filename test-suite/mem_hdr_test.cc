@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -9,12 +9,19 @@
 /* DEBUG: section 19    Store Memory Primitives */
 
 #include "squid.h"
+#include "base/TextException.h"
 #include "Generic.h"
 #include "mem_node.h"
 #include "stmem.h"
 
 #include <iostream>
 #include <sstream>
+
+/*For  a reason required on some platforms */
+unsigned int TextException::FileNameHash(const char *fname)
+{
+    return 0;
+}
 
 void
 testLowAndHigh()
@@ -92,7 +99,7 @@ testHdrVisit()
 }
 
 int
-main(int, char *[])
+main(int argc, char **argv)
 {
     assert (mem_node::InUseCount() == 0);
     testLowAndHigh();
@@ -101,6 +108,6 @@ main(int, char *[])
     assert (mem_node::InUseCount() == 0);
     testHdrVisit();
     assert (mem_node::InUseCount() == 0);
-    return EXIT_SUCCESS;
+    return 0;
 }
 

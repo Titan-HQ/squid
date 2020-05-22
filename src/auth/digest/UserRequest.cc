@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -78,7 +78,7 @@ Auth::Digest::UserRequest::credentialsStr()
 /** log a digest user in
  */
 void
-Auth::Digest::UserRequest::authenticate(HttpRequest * request, ConnStateData *, Http::HdrType)
+Auth::Digest::UserRequest::authenticate(HttpRequest * request, ConnStateData * conn, http_hdr_type type)
 {
     HASHHEX SESSIONKEY;
     HASHHEX HA2 = "";
@@ -127,7 +127,7 @@ Auth::Digest::UserRequest::authenticate(HttpRequest * request, ConnStateData *, 
             return;
         }
 
-        if (static_cast<Auth::Digest::Config*>(Auth::SchemeConfig::Find("digest"))->PostWorkaround && request->method != Http::METHOD_GET) {
+        if (static_cast<Auth::Digest::Config*>(Auth::Config::Find("digest"))->PostWorkaround && request->method != Http::METHOD_GET) {
             /* Ugly workaround for certain very broken browsers using the
              * wrong method to calculate the request-digest on POST request.
              * This should be deleted once Digest authentication becomes more
@@ -145,7 +145,7 @@ Auth::Digest::UserRequest::authenticate(HttpRequest * request, ConnStateData *, 
                 digest_request->setDenyMessage("Incorrect password");
                 return;
             } else {
-                const char *useragent = request->header.getStr(Http::HdrType::USER_AGENT);
+                const char *useragent = request->header.getStr(HDR_USER_AGENT);
 
                 static Ip::Address last_broken_addr;
                 static int seen_broken_client = 0;
@@ -218,14 +218,14 @@ Auth::Digest::UserRequest::module_direction()
 void
 Auth::Digest::UserRequest::addAuthenticationInfoHeader(HttpReply * rep, int accel)
 {
-    Http::HdrType type;
+    http_hdr_type type;
 
     /* don't add to authentication error pages */
     if ((!accel && rep->sline.status() == Http::scProxyAuthenticationRequired)
             || (accel && rep->sline.status() == Http::scUnauthorized))
         return;
 
-    type = accel ? Http::HdrType::AUTHENTICATION_INFO : Http::HdrType::PROXY_AUTHENTICATION_INFO;
+    type = accel ? HDR_AUTHENTICATION_INFO : HDR_PROXY_AUTHENTICATION_INFO;
 
 #if WAITING_FOR_TE
     /* test for http/1.1 transfer chunked encoding */
@@ -233,7 +233,7 @@ Auth::Digest::UserRequest::addAuthenticationInfoHeader(HttpReply * rep, int acce
         return;
 #endif
 
-    if ((static_cast<Auth::Digest::Config*>(Auth::SchemeConfig::Find("digest"))->authenticateProgram) && authDigestNonceLastRequest(nonce)) {
+    if ((static_cast<Auth::Digest::Config*>(Auth::Config::Find("digest"))->authenticateProgram) && authDigestNonceLastRequest(nonce)) {
         flags.authinfo_sent = true;
         Auth::Digest::User *digest_user = dynamic_cast<Auth::Digest::User *>(user().getRaw());
         if (!digest_user)
@@ -267,7 +267,7 @@ Auth::Digest::UserRequest::addAuthenticationInfoTrailer(HttpReply * rep, int acc
             || (accel && rep->sline.status() == Http::scUnauthorized))
         return;
 
-    type = accel ? Http::HdrType::AUTHENTICATION_INFO : Http::HdrType::PROXY_AUTHENTICATION_INFO;
+    type = accel ? HDR_AUTHENTICATION_INFO : HDR_PROXY_AUTHENTICATION_INFO;
 
     if ((static_cast<Auth::Digest::Config*>(digestScheme::GetInstance()->getConfig())->authenticate) && authDigestNonceLastRequest(nonce)) {
         Auth::Digest::User *digest_user = dynamic_cast<Auth::Digest::User *>(auth_user_request->user().getRaw());
@@ -291,14 +291,14 @@ Auth::Digest::UserRequest::startHelperLookup(HttpRequest *request, AccessLogEntr
     assert(user() != NULL && user()->auth_type == Auth::AUTH_DIGEST);
     debugs(29, 9, HERE << "'\"" << user()->username() << "\":\"" << realm << "\"'");
 
-    if (static_cast<Auth::Digest::Config*>(Auth::SchemeConfig::Find("digest"))->authenticateProgram == NULL) {
+    if (static_cast<Auth::Digest::Config*>(Auth::Config::Find("digest"))->authenticateProgram == NULL) {
         debugs(29, DBG_CRITICAL, "ERROR: No Digest authentication program configured.");
         handler(data);
         return;
     }
 
     const char *keyExtras = helperRequestKeyExtras(request, al);
-    if (static_cast<Auth::Digest::Config*>(Auth::SchemeConfig::Find("digest"))->utf8) {
+    if (static_cast<Auth::Digest::Config*>(Auth::Config::Find("digest"))->utf8) {
         char userstr[1024];
         latin1_to_utf8(userstr, sizeof(userstr), user()->username());
         if (keyExtras)
@@ -355,7 +355,8 @@ Auth::Digest::UserRequest::HandleReply(void *data, const Helper::Reply &reply)
         Auth::Digest::User *digest_user = dynamic_cast<Auth::Digest::User *>(auth_user_request->user().getRaw());
         assert(digest_user != NULL);
 
-        if (const char *ha1Note = reply.notes.findFirst("ha1")) {
+        const char *ha1Note = reply.notes.findFirst("ha1");
+        if (ha1Note != NULL) {
             CvtBin(ha1Note, digest_user->HA1);
             digest_user->HA1created = 1;
         } else {
@@ -368,10 +369,10 @@ Auth::Digest::UserRequest::HandleReply(void *data, const Helper::Reply &reply)
         debugs(29, DBG_IMPORTANT, "ERROR: Digest auth does not support the result code received. Using the wrong helper program? received: " << reply);
     // fall through to next case. Handle this as an ERR response.
 
-    case Helper::TimedOut:
     case Helper::BrokenHelper:
     // TODO retry the broken lookup on another helper?
     // fall through to next case for now. Handle this as an ERR response silently.
+
     case Helper::Error: {
         /* allow this because the digest_request pointer is purely local */
         Auth::Digest::UserRequest *digest_request = dynamic_cast<Auth::Digest::UserRequest *>(auth_user_request.getRaw());
@@ -380,9 +381,9 @@ Auth::Digest::UserRequest::HandleReply(void *data, const Helper::Reply &reply)
         digest_request->user()->credentials(Auth::Failed);
         digest_request->flags.invalid_password = true;
 
-        SBuf msgNote;
-        if (reply.notes.find(msgNote, "message")) {
-            digest_request->setDenyMessage(msgNote.c_str());
+        const char *msgNote = reply.notes.find("message");
+        if (msgNote != NULL) {
+            digest_request->setDenyMessage(msgNote);
         } else if (reply.other().hasContent()) {
             // old helpers did send ERR result but a bare message string instead of message= key name.
             digest_request->setDenyMessage(reply.other().content());

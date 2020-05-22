@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -12,6 +12,7 @@
 #define SQUID_MGR_ACTION_WRITER_H
 
 #include "comm/forward.h"
+#include "HttpRequestMethod.h"
 #include "mgr/StoreToCommWriter.h"
 
 namespace Mgr
@@ -21,8 +22,6 @@ namespace Mgr
 /// Comm-writes it using parent StoreToCommWriter.
 class ActionWriter: public StoreToCommWriter
 {
-    CBDATA_CLASS(ActionWriter);
-
 public:
     ActionWriter(const Action::Pointer &anAction, const Comm::ConnectionPointer &conn);
 
@@ -32,6 +31,8 @@ protected:
 
 private:
     Action::Pointer action; ///< action that fills the entry
+
+    CBDATA_CLASS2(ActionWriter);
 };
 
 } // namespace Mgr

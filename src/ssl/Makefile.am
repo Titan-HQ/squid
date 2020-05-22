@@ -1,4 +1,4 @@
-## Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+## Copyright (C) 1996-2016 The Squid Software Foundation and contributors
 ##
 ## Squid software is distributed under GPLv2+ license and includes
 ## contributions from numerous individuals and organizations.
@@ -10,7 +10,20 @@ include $(top_srcdir)/src/TestHeaders.am
 
 noinst_LTLIBRARIES = libsslsquid.la libsslutil.la
 
-## SSL stuff used by main Squid but not by certgen helper
+EXTRA_PROGRAMS = \
+	ssl_crtd
+
+EXTRA_DIST = \
+	ssl_crtd.8
+
+if USE_SSL_CRTD
+SSL_CRTD = ssl_crtd
+man_MANS = ssl_crtd.8
+else
+SSL_CRTD =
+endif
+
+## SSL stuff used by main Squid but not by ssl_crtd
 libsslsquid_la_SOURCES = \
 	bio.cc \
 	bio.h \
@@ -24,8 +37,8 @@ libsslsquid_la_SOURCES = \
 	ErrorDetail.h \
 	ErrorDetailManager.cc \
 	ErrorDetailManager.h \
-	PeekingPeerConnector.cc \
-	PeekingPeerConnector.h \
+	PeerConnector.cc \
+	PeerConnector.h \
 	ProxyCerts.h \
 	ServerBump.cc \
 	ServerBump.h \
@@ -34,9 +47,17 @@ libsslsquid_la_SOURCES = \
 	helper.cc \
 	helper.h
 
-## SSL stuff used by main Squid and certgen helper
+## SSL stuff used by main Squid and ssl_crtd
 libsslutil_la_SOURCES = \
 	gadgets.cc \
 	gadgets.h \
 	crtd_message.cc \
 	crtd_message.h
+
+libexec_PROGRAMS = \
+	$(SSL_CRTD)
+
+if USE_SSL_CRTD
+ssl_crtd_SOURCES = ssl_crtd.cc certificate_db.cc certificate_db.h
+ssl_crtd_LDADD = libsslutil.la $(SSLLIB) $(COMPAT_LIB)
+endif

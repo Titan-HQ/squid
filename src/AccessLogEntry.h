@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -14,34 +14,34 @@
 #include "comm/Connection.h"
 #include "HierarchyLogEntry.h"
 #include "http/ProtocolVersion.h"
-#include "http/RequestMethod.h"
 #include "HttpHeader.h"
+#include "HttpRequestMethod.h"
 #include "icp_opcode.h"
 #include "ip/Address.h"
 #include "LogTags.h"
 #include "MessageSizes.h"
 #include "Notes.h"
-#include "sbuf/SBuf.h"
 #if ICAP_CLIENT
 #include "adaptation/icap/Elements.h"
 #endif
 #if USE_OPENSSL
 #include "ssl/gadgets.h"
-#include "ssl/support.h"
 #endif
+
+#include "TAPE.hxx"
 
 /* forward decls */
 class HttpReply;
 class HttpRequest;
 class CustomLog;
 
-class AccessLogEntry: public RefCountable
+class AccessLogEntry: public RefCountable,public titan_v3::ICacheInfo
 {
 
 public:
     typedef RefCount<AccessLogEntry> Pointer;
 
-    AccessLogEntry() {}
+    AccessLogEntry();
     ~AccessLogEntry();
 
     /// Fetch the client IP log string into the given buffer.
@@ -49,18 +49,7 @@ public:
     /// including indirect forwarded-for IP if configured to log that
     void getLogClientIp(char *buf, size_t bufsz) const;
 
-    /// Fetch the client IDENT string, or nil if none is available.
-    const char *getClientIdent() const;
-
-    /// Fetch the external ACL provided 'user=' string, or nil if none is available.
-    const char *getExtUser() const;
-
-    /// Fetch the transaction method string (ICP opcode, HTCP opcode or HTTP method)
-    SBuf getLogMethod() const;
-
-    void syncNotes(HttpRequest *request);
-
-    SBuf url;
+    const char *url;
 
     /// TCP/IP level details about the client connection
     Comm::ConnectionPointer tcpClient;
@@ -75,10 +64,23 @@ public:
     {
 
     public:
+        HttpDetails() : method(Http::METHOD_NONE), code(0), content_type(NULL),
+            timedout(false),
+            aborted(false),
+            clientRequestSz(),
+            clientReplySz() {}
+
         HttpRequestMethod method;
-        int code = 0;
-        const char *content_type = nullptr;
-        AnyP::ProtocolVersion version;
+        int code;
+        const char *content_type;
+        Http::ProtocolVersion version;
+        bool timedout; ///< terminated due to a lifetime or I/O timeout
+        bool aborted; ///< other abnormal termination (e.g., I/O error)
+
+        /// compute suffix for the status access.log field
+        const char *statusSfx() const {
+            return timedout ? "_TIMEDOUT" : (aborted ? "_ABORTED" : "");
+        }
 
         /// counters for the original request received from client
         // TODO calculate header and payload better (by parser)
@@ -97,8 +99,11 @@ public:
      */
     class IcpDetails
     {
+
     public:
-        icp_opcode opcode = ICP_INVALID;
+        IcpDetails() : opcode(ICP_INVALID) {}
+
+        icp_opcode opcode;
     } icp;
 
     /** \brief This subclass holds log info for HTCP protocol
@@ -107,7 +112,9 @@ public:
     class HtcpDetails
     {
     public:
-        const char *opcode = nullptr;
+        HtcpDetails() : opcode(NULL) {};
+
+        const char *opcode;
     } htcp;
 
 #if USE_OPENSSL
@@ -115,8 +122,10 @@ public:
     class SslDetails
     {
     public:
-        const char *user = nullptr; ///< emailAddress from the SSL client certificate
-        int bumpMode = ::Ssl::bumpEnd; ///< whether and how the request was SslBumped
+        SslDetails();
+
+        const char *user; ///< emailAddress from the SSL client certificate
+        int bumpMode; ///< whether and how the request was SslBumped
     } ssl;
 #endif
 
@@ -127,26 +136,41 @@ public:
      */
     class CacheDetails
     {
+
     public:
-        CacheDetails() {
+        CacheDetails() : caddr(),
+            replySize(0),
+            highOffset(0),
+            objectSize(0),
+            code (LOG_TAG_NONE),
+            msec(0),
+            rfc931 (NULL),
+            extuser(NULL),
+#if USE_OPENSSL
+            ssluser(NULL),
+#endif
+            port(NULL)
+        {
             caddr.setNoAddr();
             memset(&start_time, 0, sizeof(start_time));
-            memset(&trTime, 0, sizeof(start_time));
         }
 
         Ip::Address caddr;
-        int64_t highOffset = 0;
-        int64_t objectSize = 0;
+        int64_t replySize;   //Removed by squid, but we still need it
+        int64_t highOffset;
+        int64_t objectSize;
         LogTags code;
         struct timeval start_time; ///< The time the master transaction started
-        struct timeval trTime; ///< The response time
-        const char *rfc931 = nullptr;
-        const char *extuser = nullptr;
+        int msec;
+        const char *rfc931;
+        const char *extuser;
 #if USE_OPENSSL
-        const char *ssluser = nullptr;
-        Security::CertPointer sslClientCert; ///< cert received from the client
+
+        const char *ssluser;
+        Ssl::X509_Pointer sslClientCert; ///< cert received from the client
 #endif
         AnyP::PortCfgPointer port;
+
     } cache;
 
     /** \brief This subclass holds log info for various headers in raw format
@@ -154,10 +178,17 @@ public:
      */
     class Headers
     {
+
     public:
-        char *request = nullptr; //< virgin HTTP request headers
-        char *adapted_request = nullptr; //< HTTP request headers after adaptation and redirection
-        char *reply = nullptr;
+        Headers() : request(NULL),
+            adapted_request(NULL),
+            reply(NULL) {}
+
+        char *request; //< virgin HTTP request headers
+
+        char *adapted_request; //< HTTP request headers after adaptation and redirection
+
+        char *reply;
     } headers;
 
 #if USE_ADAPTATION
@@ -166,19 +197,31 @@ public:
      */
     class AdaptationDetails
     {
+
     public:
+        AdaptationDetails(): last_meta(NULL) {}
+
         /// image of the last ICAP response header or eCAP meta received
-        char *last_meta = nullptr;
+        char *last_meta;
     } adapt;
 #endif
 
-    const char *lastAclName = nullptr; ///< string for external_acl_type %ACL format code
-    SBuf lastAclData; ///< string for external_acl_type %DATA format code
+    // Why is this a sub-class and not a set of real "private:" fields?
+    // TODO: shuffle this to the relevant ICP/HTCP protocol section
+    class Private
+    {
 
+    public:
+        Private() : method_str(NULL) {}
+
+        const char *method_str;
+    } _private;
     HierarchyLogEntry hier;
-    HttpReply *reply = nullptr;
-    HttpRequest *request = nullptr; //< virgin HTTP request
-    HttpRequest *adapted_request = nullptr; //< HTTP request after adaptation and redirection
+    HttpReply *reply;
+    HttpRequest *request; //< virgin HTTP request
+    HttpRequest *adapted_request; //< HTTP request after adaptation and redirection
+
+    uint64_t category; // Titax.
 
     /// key:value pairs set by squid.conf note directive and
     /// key=value pairs returned from URL rewrite/redirect helper
@@ -191,61 +234,77 @@ public:
     class IcapLogEntry
     {
     public:
-        IcapLogEntry() {
-            memset(&trTime, 0, sizeof(trTime));
-            memset(&ioTime, 0, sizeof(ioTime));
-            memset(&processingTime, 0, sizeof(processingTime));
-        }
+        IcapLogEntry() : reqMethod(Adaptation::methodNone), bytesSent(0), bytesRead(0),
+            bodyBytesRead(-1), request(NULL), reply(NULL),
+            outcome(Adaptation::Icap::xoUnknown), trTime(0),
+            ioTime(0), resStatus(Http::scNone), processingTime(0) {}
 
         Ip::Address hostAddr; ///< ICAP server IP address
         String serviceName;        ///< ICAP service name
         String reqUri;             ///< ICAP Request-URI
-        Adaptation::Icap::ICAP::Method reqMethod = Adaptation::methodNone; ///< ICAP request method
-        int64_t bytesSent = 0;       ///< number of bytes sent to ICAP server so far
-        int64_t bytesRead = 0;       ///< number of bytes read from ICAP server so far
+        Adaptation::Icap::ICAP::Method reqMethod; ///< ICAP request method
+        int64_t bytesSent;       ///< number of bytes sent to ICAP server so far
+        int64_t bytesRead;       ///< number of bytes read from ICAP server so far
         /**
          * number of ICAP body bytes read from ICAP server or -1 for no encapsulated
          * message data in ICAP reply (eg 204 responses)
          */
-        int64_t bodyBytesRead = -1;
-        HttpRequest* request = nullptr;    ///< ICAP request
-        HttpReply* reply = nullptr;        ///< ICAP reply
+        int64_t bodyBytesRead;
+        HttpRequest* request;    ///< ICAP request
+        HttpReply* reply;        ///< ICAP reply
 
-        Adaptation::Icap::XactOutcome outcome = Adaptation::Icap::xoUnknown; ///< final transaction status
+        Adaptation::Icap::XactOutcome outcome; ///< final transaction status
         /** \brief Transaction response time.
          * The timer starts when the ICAP transaction
          *  is created and stops when the result of the transaction is logged
          */
-        struct timeval trTime;
+        int trTime;
         /** \brief Transaction I/O time.
          * The timer starts when the first ICAP request
          * byte is scheduled for sending and stops when the lastbyte of the
          * ICAP response is received.
          */
-        struct timeval ioTime;
-        Http::StatusCode resStatus = Http::scNone;   ///< ICAP response status code
-        struct timeval processingTime;      ///< total ICAP processing time
+        int ioTime;
+        Http::StatusCode resStatus;   ///< ICAP response status code
+        int processingTime;      ///< total ICAP processing time in milliseconds
     }
     icap;
 #endif
-
-    /// Effective URI of the received client (or equivalent) HTTP request or,
-    /// in rare cases where that information was not collected, a nil pointer.
-    /// Receiving errors are represented by "error:..." URIs.
-    /// Adaptations and redirections do not affect this URI.
-    const SBuf *effectiveVirginUrl() const;
-
-    /// Remember Client URI (or equivalent) when there is no HttpRequest.
-    void setVirginUrlForMissingRequest(const SBuf &vu)
-    {
-        if (!request)
-            virginUrlForMissingRequest_ = vu;
-    }
-
-private:
-    /// Client URI (or equivalent) for effectiveVirginUrl() when HttpRequest is
-    /// missing. This member is ignored unless the request member is nil.
-    SBuf virginUrlForMissingRequest_;
+    virtual void  operator()(ICacheInfo::t_cache * _out){
+		if (_out){
+			(void)zm(_out,sizeof(ICacheInfo::t_cache));
+	        switch (this->cache.code) {
+	           // case LOG_TCP_MISS:
+	           // case LOG_TCP_CLIENT_REFRESH_MISS:
+	           // case LOG_TCP_SWAPFAIL_MISS:
+	           // case LOG_UDP_MISS:
+	           //     cacheHit = 0;
+	           //     break;
+	            case LOG_TCP_DENIED:
+	            case LOG_TCP_DENIED_REPLY:{
+	            	_out->blocked=true;
+	                return;
+	            }break;
+	            case LOG_TCP_HIT:
+	            case LOG_TCP_IMS_HIT:
+	            case LOG_TCP_NEGATIVE_HIT:
+	            case LOG_TCP_MEM_HIT:
+	            case LOG_TCP_OFFLINE_HIT:
+	            case LOG_UDP_HIT:
+	            case LOG_TCP_REFRESH_UNMODIFIED:
+	            case LOG_TCP_REFRESH_MODIFIED:{
+	            //    case LOG_TCP_REFRESH_FAIL:
+	            	_out->cached = true;
+	            }break;
+	            default:{
+	            	_out->cached = false;
+	            }break;
+	        };
+	        _out->replySize=(uint64_t)this->cache.replySize;
+	        _out->objectSize=(uint64_t)this->cache.objectSize;
+	        _out->msec=this->cache.msec;
+		};
+	}
 };
 
 class ACLChecklist;

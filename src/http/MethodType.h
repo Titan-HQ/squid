@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -9,8 +9,8 @@
 #ifndef SQUID_SRC_HTTP_METHODTYPE_H
 #define SQUID_SRC_HTTP_METHODTYPE_H
 
-#include "sbuf/SBuf.h"
-
+#include "SBuf.h"
+#include "TAPE.h"
 namespace Http
 {
 
@@ -18,83 +18,41 @@ namespace Http
  * The IANA registry for HTTP status codes can be found at:
  * http://www.iana.org/assignments/http-methods/http-methods.xhtml
  */
-typedef enum _method_t {
-    METHOD_NONE = 0,
+//WARNING : if changing list of known methods, please update manually the MethodType.cc file   
+typedef t_method_type MethodType;    
+using ::METHOD_NONE;
+using ::METHOD_GET;
+using ::METHOD_POST;
+using ::METHOD_PUT;
+using ::METHOD_HEAD;
+using ::METHOD_CONNECT;
+using ::METHOD_TRACE;
+using ::METHOD_OPTIONS;
+using ::METHOD_DELETE;
+using ::METHOD_CHECKOUT;
+using ::METHOD_CHECKIN;
+using ::METHOD_UNCHECKOUT;
+using ::METHOD_MKWORKSPACE;
+using ::METHOD_VERSION_CONTROL;
+using ::METHOD_REPORT;
+using ::METHOD_UPDATE;
+using ::METHOD_LABEL;
+using ::METHOD_MERGE;
+using ::METHOD_BASELINE_CONTROL;
+using ::METHOD_MKACTIVITY;
+using ::METHOD_PROPFIND;
+using ::METHOD_PROPPATCH;
+using ::METHOD_MKCOL;
+using ::METHOD_COPY;
+using ::METHOD_MOVE;
+using ::METHOD_LOCK;
+using ::METHOD_UNLOCK;
+using ::METHOD_SEARCH;
+using ::METHOD_PRI;
+using ::METHOD_PURGE;
+using ::METHOD_OTHER;
+using ::METHOD_ENUM_END;
 
-    // RFC 2616 (HTTP)
-    METHOD_GET,
-    METHOD_POST,
-    METHOD_PUT,
-    METHOD_HEAD,
-    METHOD_CONNECT,
-    METHOD_TRACE,
-    METHOD_OPTIONS,
-    METHOD_DELETE,
-
-#if NO_SPECIAL_HANDLING
-    // RFC 2068
-    METHOD_LINK,
-    METHOD_UNLINK,
-#endif
-
-    // RFC 3253
-    METHOD_CHECKOUT,
-    METHOD_CHECKIN,
-    METHOD_UNCHECKOUT,
-    METHOD_MKWORKSPACE,
-    METHOD_VERSION_CONTROL,
-    METHOD_REPORT,
-    METHOD_UPDATE,
-    METHOD_LABEL,
-    METHOD_MERGE,
-    METHOD_BASELINE_CONTROL,
-    METHOD_MKACTIVITY,
-
-#if NO_SPECIAL_HANDLING
-    // RFC 3648
-    METHOD_ORDERPATCH,
-
-    // RFC 3744
-    METHOD_ACL,
-
-    // RFC 4437
-    METHOD_MKREDIRECTREF,
-    METHOD_UPDATEREDIRECTREF,
-
-    // RFC 4791
-    METHOD_MKCALENDAR,
-#endif
-
-    // RFC 4918 (WebDAV)
-    METHOD_PROPFIND,
-    METHOD_PROPPATCH,
-    METHOD_MKCOL,
-    METHOD_COPY,
-    METHOD_MOVE,
-    METHOD_LOCK,
-    METHOD_UNLOCK,
-
-    // RFC 5323
-    METHOD_SEARCH,
-
-#if NO_SPECIAL_HANDLING
-    // RFC 5789
-    METHOD_PATCH,
-
-    // RFC 5842
-    METHOD_BIND,
-    METHOD_REBIND,
-    METHOD_UNBIND,
-#endif
-
-    // RFC 7540
-    METHOD_PRI,
-
-    // Squid extension methods
-    METHOD_PURGE,
-    METHOD_OTHER,
-    METHOD_ENUM_END  // MUST be last, (yuck) this is used as an array-initialization index constant!
-} MethodType;
 
 extern const SBuf MethodType_sb[];
 

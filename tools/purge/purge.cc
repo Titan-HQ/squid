@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -171,7 +171,7 @@ REList::REList( const char* what, bool doCase )
         char buffer[256];
         regerror( result, &rexp, buffer, 256 );
         fprintf( stderr, "unable to compile re \"%s\": %s\n", what, buffer );
-        exit(EXIT_FAILURE);
+        exit(1);
     }
 }
 
@@ -191,7 +191,7 @@ REList::match( const char* check ) const
         regerror( result, &rexp, buffer, 256 );
         fprintf( stderr, "unable to execute re \"%s\"\n+ on line \"%s\": %s\n",
                  data, check, buffer );
-        exit(EXIT_FAILURE);
+        exit(1);
     }
     return ( result == 0 );
 }
@@ -219,7 +219,7 @@ concat( const char* start, ... )
     char* result = new char[size];
     if ( result == 0 ) {
         perror( "string memory allocation" );
-        exit(EXIT_FAILURE);
+        exit(1);
     }
 
     // second run: copy content
@@ -272,7 +272,7 @@ log_extended( const char* fn, int code, long size, const SquidMetaList* meta )
         snprintf( md5, sizeof(md5), "%-32s", "(no_md5_data_available)" );
     }
 
-    char timeb[256];
+    char timeb[ 256 ];
     if ( meta && (findings = meta->search( STORE_META_STD )) ) {
         StoreMetaStd temp;
         // make data aligned, avoid SIGBUS on RISC machines (ARGH!)
@@ -615,7 +615,7 @@ helpMe( void )
         "\t0 and 1 are recommended - slow rebuild your cache with other modes.\n"
         " -s\tshow all options after option parsing, but before really starting.\n"
         " -v\tshow more information about the file, e.g. MD5, timestamps and flags.\n"
-        "\n", DEFAULT_CONFIG_FILE, DEFAULTHOST, DEFAULTPORT );
+        "\n", DEFAULT_SQUID_CONF, DEFAULTHOST, DEFAULTPORT );
 
 }
 
@@ -657,7 +657,7 @@ parseCommandline( int argc, char* argv[], REList*& head,
         case 'c':
             if ( !optarg || !*optarg ) {
                 fprintf( stderr, "%c requires a regex pattern argument!\n", option );
-                exit(EXIT_FAILURE);
+                exit(1);
             }
             if ( *conffile ) xfree((void*) conffile);
             conffile = xstrdup(optarg);
@@ -676,7 +676,7 @@ parseCommandline( int argc, char* argv[], REList*& head,
         case 'e':
             if ( !optarg || !*optarg ) {
                 fprintf( stderr, "%c requires a regex pattern argument!\n", option );
-                exit(EXIT_FAILURE);
+                exit(1);
             }
             if ( head == 0 )
                 tail = head = new REList( optarg, option=='E' );
@@ -689,7 +689,7 @@ parseCommandline( int argc, char* argv[], REList*& head,
         case 'f':
             if ( !optarg || !*optarg ) {
                 fprintf( stderr, "%c requires a filename argument!\n", option );
-                exit(EXIT_FAILURE);
+                exit(1);
             }
             if ( (rfile = fopen( optarg, "r" )) != NULL ) {
                 unsigned long lineno = 0;
@@ -701,7 +701,7 @@ parseCommandline( int argc, char* argv[], REList*& head,
                     if ( len+2 >= LINESIZE ) {
                         fprintf( stderr, "%s:%lu: line too long, sorry.\n",
                                  optarg, lineno );
-                        exit(EXIT_FAILURE);
+                        exit(1);
                     }
 
                     // remove trailing line breaks
@@ -731,7 +731,7 @@ parseCommandline( int argc, char* argv[], REList*& head,
         case 'p':
             if ( !optarg || !*optarg ) {
                 fprintf( stderr, "%c requires a port argument!\n", option );
-                exit(EXIT_FAILURE);
+                exit(1);
             }
             colon = strchr( optarg, ':' );
             if ( colon == 0 ) {
@@ -744,7 +744,7 @@ parseCommandline( int argc, char* argv[], REList*& head,
                     // assume that main() did set the default port
                     if ( convertHostname(optarg,serverHostIp) == -1 ) {
                         fprintf( stderr, "unable to resolve host %s!\n", optarg );
-                        exit(EXIT_FAILURE);
+                        exit(1);
                     }
                 } else {
                     // assume that main() did set the default host
@@ -756,18 +756,18 @@ parseCommandline( int argc, char* argv[], REList*& head,
                 ++colon;
                 if ( convertHostname(optarg,serverHostIp) == -1 ) {
                     fprintf( stderr, "unable to resolve host %s!\n", optarg );
-                    exit(EXIT_FAILURE);
+                    exit(1);
                 }
                 if ( convertPortname(colon,serverHostPort) == -1 ) {
                     fprintf( stderr, "unable to resolve port %s!\n", colon );
-                    exit(EXIT_FAILURE);
+                    exit(1);
                 }
             }
             break;
         case 'P':
             if ( !optarg || !*optarg ) {
                 fprintf( stderr, "%c requires a mode argument!\n", option );
-                exit(EXIT_FAILURE);
+                exit(1);
             }
             ::purgeMode = ( strtol( optarg, 0, 0 ) & 0x07 );
             break;
@@ -780,7 +780,7 @@ parseCommandline( int argc, char* argv[], REList*& head,
         case '?':
         default:
             helpMe();
-            exit(EXIT_FAILURE);
+            exit(1);
         }
     }
 
@@ -789,7 +789,7 @@ parseCommandline( int argc, char* argv[], REList*& head,
     if ( head == 0 ) {
         fputs( "There was no regular expression defined. If you intend\n", stderr );
         fputs( "to match all possible URLs, use \"-e .\" instead.\n", stderr );
-        exit(EXIT_FAILURE);
+        exit(1);
     }
 
     // postcondition: head != 0
@@ -860,7 +860,7 @@ extern "C" {
     handler( int signo ) {
         ::term_flag = signo;
         if ( getpid() == getpgrp() ) kill( -getpgrp(), signo );
-        exit(EXIT_FAILURE);
+        exit(1);
     }
 
 } // extern "C"
@@ -890,11 +890,11 @@ main( int argc, char* argv[] )
 {
     // setup variables
     REList* list = 0;
-    char* conffile = xstrdup(DEFAULT_CONFIG_FILE);
+    char* conffile = xstrdup( DEFAULT_SQUID_CONF );
     serverPort = htons(DEFAULTPORT);
     if ( convertHostname(DEFAULTHOST,serverHost) == -1 ) {
         fprintf( stderr, "unable to resolve host %s!\n", DEFAULTHOST );
-        exit(EXIT_FAILURE);
+        return 1;
     }
 
     // setup line buffer
@@ -912,7 +912,7 @@ main( int argc, char* argv[] )
             Signal( SIGINT, handler, true ) == SIG_ERR ||
             Signal( SIGHUP, handler, true ) == SIG_ERR ) {
         perror( "unable to install signal/exit function" );
-        exit(EXIT_FAILURE);
+        return 1;
     }
 
     // try to read squid.conf file to determine all cache_dir locations
@@ -942,7 +942,7 @@ main( int argc, char* argv[] )
             // make parent process group leader for easier killings
             if ( setpgid(getpid(), getpid()) != 0 ) {
                 perror( "unable to set process group leader" );
-                exit(EXIT_FAILURE);
+                return 1;
             }
 
             // -a is mutually exclusive with fork mode
@@ -958,7 +958,7 @@ main( int argc, char* argv[] )
                         // fork error, this is bad!
                         perror( "unable to fork" );
                         kill( -getpgrp(), SIGTERM );
-                        exit(EXIT_FAILURE);
+                        return 1;
                     } else if ( child[i] == 0 ) {
                         // child mode
                         // execute OR complain
@@ -966,7 +966,7 @@ main( int argc, char* argv[] )
                             fprintf( stderr, "program terminated due to error: %s\n",
                                      strerror(errno) );
                         xfree((void*) cdv[i].base);
-                        exit(EXIT_SUCCESS);
+                        return 0;
                     } else {
                         // parent mode
                         if ( ::debugFlag ) printf( "forked child %d\n", (int) child[i] );
@@ -992,6 +992,6 @@ main( int argc, char* argv[] )
     if ( copydir ) xfree( (void*) copydir );
     xfree((void*) conffile);
     delete list;
-    return EXIT_SUCCESS;
+    return 0;
 }
 

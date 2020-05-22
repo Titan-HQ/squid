@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -12,15 +12,17 @@
 #define SQUID_ESISEQUENCE_H
 
 #include "esi/Element.h"
-#include "mem/forward.h"
+#include "esi/ElementList.h"
+#include "MemPool.h"
 
 /* esiSequence */
 
 class esiSequence : public ESIElement
 {
-    MEMPROXY_CLASS(esiSequence);
 
 public:
+    MEMPROXY_CLASS(esiSequence);
+
     esiSequence(esiTreeParentPtr, bool = false);
     ~esiSequence();
 
@@ -36,7 +38,7 @@ public:
     void makeUsableElements(esiSequence const &old, ESIVarState &);
     Pointer makeUsable(esiTreeParentPtr, ESIVarState &) const;
 
-    Esi::Elements elements; /* unprocessed or rendered nodes */
+    ElementList elements; /* unprocessed or rendered nodes */
     size_t processedcount;
 
     struct {
@@ -62,6 +64,8 @@ private:
     bool finishedProcessing() const;
     void processStep(int dovars);
 };
+
+MEMPROXY_CLASS_INLINE(esiSequence);
 
 #endif /* SQUID_ESISEQUENCE_H */
 

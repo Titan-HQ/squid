@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -22,7 +22,6 @@
 #include "cache_cf.h"
 #include "client_side.h"
 #include "helper.h"
-#include "http/Stream.h"
 #include "HttpHeaderTools.h"
 #include "HttpReply.h"
 #include "HttpRequest.h"
@@ -31,12 +30,21 @@
 #include "Store.h"
 #include "wordlist.h"
 
+/**
+ \defgroup AuthNegotiateInternal Negotiate Authenticator Internals
+ \ingroup AuthNegotiateAPI
+ */
+
+/* Negotiate Scheme */
 static AUTHSSTATS authenticateNegotiateStats;
 
+/// \ingroup AuthNegotiateInternal
 statefulhelper *negotiateauthenticators = NULL;
 
+/// \ingroup AuthNegotiateInternal
 static int authnegotiate_initialised = 0;
 
+/// \ingroup AuthNegotiateInternal
 static hash_table *proxy_auth_cache = NULL;
 
 void
@@ -53,7 +61,7 @@ Auth::Negotiate::Config::rotateHelpers()
 void
 Auth::Negotiate::Config::done()
 {
-    Auth::SchemeConfig::done();
+    Auth::Config::done();
 
     authnegotiate_initialised = 0;
 
@@ -73,6 +81,35 @@ Auth::Negotiate::Config::done()
     debugs(29, DBG_IMPORTANT, "Reconfigure: Negotiate authentication configuration cleared.");
 }
 
+bool
+Auth::Negotiate::Config::dump(StoreEntry * entry, const char *name, Auth::Config * scheme) const
+{
+    if (!Auth::Config::dump(entry, name, scheme))
+        return false;
+
+    storeAppendPrintf(entry, "%s negotiate keep_alive %s\n", name, keep_alive ? "on" : "off");
+    return true;
+}
+
+Auth::Negotiate::Config::Config() : keep_alive(1)
+{ }
+
+void
+Auth::Negotiate::Config::parse(Auth::Config * scheme, int n_configured, char *param_str)
+{
+    if (strcmp(param_str, "program") == 0) {
+        if (authenticateProgram)
+            wordlistDestroy(&authenticateProgram);
+
+        parse_wordlist(&authenticateProgram);
+
+        requirePathnameExists("auth_param negotiate program", authenticateProgram->key);
+    } else if (strcmp(param_str, "keep_alive") == 0) {
+        parse_onoff(&keep_alive);
+    } else
+        Auth::Config::parse(scheme, n_configured, param_str);
+}
+
 const char *
 Auth::Negotiate::Config::type() const
 {
@@ -84,7 +121,7 @@ Auth::Negotiate::Config::type() const
  * Called AFTER parsing the config file
  */
 void
-Auth::Negotiate::Config::init(Auth::SchemeConfig *)
+Auth::Negotiate::Config::init(Auth::Config * scheme)
 {
     if (authenticateProgram) {
 
@@ -134,8 +171,10 @@ Auth::Negotiate::Config::configured() const
     return false;
 }
 
+/* Negotiate Scheme */
+
 void
-Auth::Negotiate::Config::fixHeader(Auth::UserRequest::Pointer auth_user_request, HttpReply *rep, Http::HdrType reqType, HttpRequest * request)
+Auth::Negotiate::Config::fixHeader(Auth::UserRequest::Pointer auth_user_request, HttpReply *rep, http_hdr_type reqType, HttpRequest * request)
 {
     if (!authenticateProgram)
         return;
@@ -205,8 +244,7 @@ Auth::Negotiate::Config::fixHeader(Auth::UserRequest::Pointer auth_user_request,
 static void
 authenticateNegotiateStats(StoreEntry * sentry)
 {
-    if (negotiateauthenticators)
-        negotiateauthenticators->packStatsInto(sentry, "Negotiate Authenticator Statistics");
+    helperStatefulStats(sentry, negotiateauthenticators, "Negotiate Authenticator Statistics");
 }
 
 /*
@@ -216,7 +254,7 @@ authenticateNegotiateStats(StoreEntry * sentry)
 Auth::UserRequest::Pointer
 Auth::Negotiate::Config::decode(char const *proxy_auth, const char *aRequestRealm)
 {
-    Auth::Negotiate::User *newUser = new Auth::Negotiate::User(Auth::SchemeConfig::Find("negotiate"), aRequestRealm);
+    Auth::Negotiate::User *newUser = new Auth::Negotiate::User(Auth::Config::Find("negotiate"), aRequestRealm);
     Auth::UserRequest *auth_user_request = new Auth::Negotiate::UserRequest();
     assert(auth_user_request->user() == NULL);
 

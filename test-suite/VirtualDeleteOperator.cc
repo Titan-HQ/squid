@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -91,7 +91,7 @@ ChildVirtual::operator delete(void *address)
 ChildVirtual::~ChildVirtual() {}
 
 int
-main(int, char *[])
+main(int argc, char **argv)
 {
     assert (BaseVirtual::Calls.news() == 0);
     assert (BaseVirtual::Calls.deletes() == 0);
@@ -107,12 +107,12 @@ main(int, char *[])
     assert (BaseVirtual::Calls.deletes() == 0);
     assert (ChildVirtual::Calls.news() == 1);
     assert (ChildVirtual::Calls.deletes() == 1);
-    // deleting nullptr works.
-    BaseVirtual::DeleteABase(nullptr);
+    // deleting NULL works.
+    BaseVirtual::DeleteABase(NULL);
     assert (BaseVirtual::Calls.news() == 0);
     assert (BaseVirtual::Calls.deletes() == 0);
     assert (ChildVirtual::Calls.news() == 1);
     assert (ChildVirtual::Calls.deletes() == 1);
-    return EXIT_SUCCESS;
+    return 0;
 }
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 1996-2018 The Squid Software Foundation and contributors
+ * Copyright (C) 1996-2016 The Squid Software Foundation and contributors
  *
  * Squid software is distributed under GPLv2+ license and includes
  * contributions from numerous individuals and organizations.
@@ -11,8 +11,10 @@
 
 #include "http/StatusLine.h"
 #include "HttpBody.h"
+#include "HttpMsg.h"
 #include "HttpRequest.h"
 
+extern t_HttpRmap _RLmap;
 void httpReplyInitModule(void);
 
 /* Sync changes here with HttpReply.cc */
@@ -21,14 +23,14 @@ class HttpHdrContRange;
 
 class HttpHdrSc;
 
-class HttpReply: public Http::Message
+class HttpReply: public HttpMsg
 {
-    MEMPROXY_CLASS(HttpReply);
 
 public:
     typedef RefCount<HttpReply> Pointer;
 
-    HttpReply();
+    MEMPROXY_CLASS(HttpReply);
+    HttpReply(std::string _org="<EMPTY>");
     ~HttpReply();
 
     virtual void reset();
@@ -38,7 +40,7 @@ public:
      \retval false and sets *error to zero when needs more data
      \retval false and sets *error to a positive Http::StatusCode on error
      */
-    virtual bool sanityCheckStartLine(const char *buf, const size_t hdr_len, Http::StatusCode *error);
+    virtual bool sanityCheckStartLine(MemBuf *buf, const size_t hdr_len, Http::StatusCode *error);
 
     /** \par public, readable; never update these or their .hdr equivalents directly */
     time_t date;
@@ -51,8 +53,7 @@ public:
 
     HttpHdrSc *surrogate_control;
 
-    /// \returns parsed Content-Range for a 206 response and nil for others
-    const HttpHdrContRange *contentRange() const;
+    HttpHdrContRange *content_range;
 
     short int keep_alive;
 
@@ -64,13 +65,14 @@ public:
     String protoPrefix;         /**< e.g., "HTTP/"  */
 
     bool do_clean;
+    std::string _org_req;
 
 public:
     virtual int httpMsgParseError();
 
     virtual bool expectingBody(const HttpRequestMethod&, int64_t&) const;
 
-    virtual bool inheritProperties(const Http::Message *);
+    virtual bool inheritProperties(const HttpMsg *aMsg);
 
     bool updateOnNotModified(HttpReply const *other);
 
@@ -79,7 +81,7 @@ public:
                     const char *reason, const char *ctype, int64_t clen, time_t lmt, time_t expires);
 
     /** \return a ready to use mem buffer with a packed reply */
-    MemBuf *pack() const;
+    MemBuf *pack();
 
     /** construct a 304 reply and return it */
     HttpReply *make304() const;
@@ -100,11 +102,7 @@ public:
 
     int validatorsMatch (HttpReply const *other) const;
 
-    /// adds status line and header to the given Packable
-    /// assumes that `p` can quickly process small additions
-    void packHeadersUsingFastPacker(Packable &p) const;
-    /// same as packHeadersUsingFastPacker() but assumes that `p` cannot quickly process small additions
-    void packHeadersUsingSlowPacker(Packable &p) const;
+    void packHeadersInto(Packer * p) const;
 
     /** Clone this reply.
      *  Could be done as a copy-contructor but we do not want to accidently copy a HttpReply..
@@ -119,14 +117,7 @@ public:
     /// whether our Date header value is smaller than theirs
     /// \returns false if any information is missing
     bool olderThan(const HttpReply *them) const;
-
-    /// Some response status codes prohibit sending Content-Length (RFC 7230 section 3.3.2).
-    void removeIrrelevantContentLength();
-
-    virtual void configureContentLengthInterpreter(Http::ContentLengthInterpreter &);
-    /// parses reply header using Parser
-    bool parseHeader(Http1::Parser &hp);
-
+    
 private:
     /** initialize */
     void init();
@@ -135,11 +126,11 @@ private:
 
     void hdrCacheClean();
 
-    void packInto(MemBuf &) const;
+    void packInto(Packer * p);
 
     /* ez-routines */
     /** \return construct 304 reply and pack it into a MemBuf */
-    MemBuf *packed304Reply() const;
+    MemBuf *packed304Reply();
 
     /* header manipulation */
     time_t hdrExpirationTime();
@@ -153,13 +144,13 @@ private:
 
     mutable int64_t bodySizeMax; /**< cached result of calcMaxBodySize */
 
-    HttpHdrContRange *content_range; ///< parsed Content-Range; nil for non-206 responses!
-
 protected:
-    virtual void packFirstLineInto(Packable * p, bool) const { sline.packInto(p); }
+    virtual void packFirstLineInto(Packer * p, bool) const { sline.packInto(p); }
 
     virtual bool parseFirstLine(const char *start, const char *end);
 };
+
+MEMPROXY_CLASS_INLINE(HttpReply);
 
 #endif /* SQUID_HTTPREPLY_H */
 
